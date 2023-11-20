@@ -59,7 +59,7 @@ void ecall_sort_perf() {
     TestVector::Writer writer(vExt.begin(), vExt.end());
     for (uint64_t i = 0; i < size; ++i) {
       SortElement element = SortElement();
-      element.key = UniformRandom();
+      element.key = UniformRandom() % 1000000;
       writer.write(element);
     }
     writer.flush();
@@ -89,6 +89,13 @@ void ecall_sort_perf() {
 
     uint64_t currTime2;
     ocall_measure_time(&currTime2);
+
+    TestVector::PrefetchReader reader(vExt.begin(), vExt.end(), 1);
+    
+    for (uint64_t i = 0; i < size; ++i) {
+      Assert(vExt.read() < 1000000);
+    }
+
     uint64_t timediff = currTime2 - currTime;
     printf("%ld\t%ld\t%d.%d\n", size, ELEMENT_SIZE, timediff / 1'000'000'000,
            timediff % 1'000'000'000);

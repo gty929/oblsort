@@ -3,7 +3,12 @@
 #include "common/dummy.hpp"
 #include "common/encrypted.hpp"
 #include "common/mov_intrinsics.hpp"
-
+#include "sgx_eid.h"
+#include "sgx_tcrypto.h"
+#include "sgx_trts.h"
+#include "sgx_thread.h"
+#include "sgx_tseal.h"
+#include <omp.h>
 /// This file defines some macros and data structures for sorting and shuffling
 /// algorithms.
 
@@ -11,6 +16,9 @@
 #ifndef ELEMENT_SIZE
 #define ELEMENT_SIZE 128
 #endif
+
+#define MAX_THREAD_COUNT omp_get_max_threads()
+int thread_count = MAX_THREAD_COUNT;
 
 namespace EM::Algorithm {
 enum SortMethod {
@@ -142,6 +150,14 @@ struct TaggedT {
   inline void setData(const T& _data) {
     v = _data;
     tag = UniformRandom() & 0x7fff'ffff'ffff'ffffUL;
+    if (tag == 0) {
+      printf("UniformRandom() returns 0\n");
+    }
+  }
+
+  inline void setData(const T& _data, RandGen& custom_rand) {
+    v = _data;
+    tag = UniformRandom(custom_rand) & 0x7fff'ffff'ffff'ffffUL;
   }
 
   inline const T& getData() const { return v; }

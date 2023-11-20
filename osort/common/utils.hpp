@@ -59,28 +59,51 @@ inline uint64_t UniformRandom(uint64_t left, uint64_t right) {
   return default_rand.rand64() % (right - left + 1) + left;
 }
 
+inline uint64_t UniformRandom(uint64_t left, uint64_t right, RandGen& custom_rand) {
+  return custom_rand.rand64() % (right - left + 1) + left;
+}
+
 inline uint32_t UniformRandom32(uint32_t left, uint32_t right) {
   return default_rand.rand32() % (right - left + 1) + left;
 }
 
+inline uint32_t UniformRandom32(uint32_t left, uint32_t right, RandGen& custom_rand) {
+  return custom_rand.rand32() % (right - left + 1) + left;
+}
+
 inline bool UniformRandomBit() { return default_rand.rand1(); }
+
+inline bool UniformRandomBit(RandGen& custom_rand) { return custom_rand.rand1(); }
 
 // [0,right]
 INLINE uint64_t UniformRandom(uint64_t right) {
   return UniformRandom(0, right);
 }
 
+INLINE uint64_t UniformRandom(uint64_t right, RandGen& custom_rand) {
+  return UniformRandom(0, right, custom_rand);
+}
+
 // [0,right]
 INLINE uint64_t UniformRandom() { return default_rand.rand64(); }
+
+INLINE uint64_t UniformRandom(RandGen& custom_rand) { return custom_rand.rand64(); }
 
 INLINE uint64_t UniformRandom32(uint32_t right) {
   return UniformRandom32(0, right);
 }
 
+INLINE uint64_t UniformRandom32(uint32_t right, RandGen& custom_rand) {
+  return UniformRandom32(0, right, custom_rand);
+}
+
 // [0,right]
 INLINE uint64_t UniformRandom32() { return default_rand.rand32(); }
 
+INLINE uint64_t UniformRandom32(RandGen& custom_rand) { return custom_rand.rand32(); }
+
 INLINE void GetRand16(uint8_t* out) {
+  // TODO: make this thread safe
   *(uint64_t*)out = UniformRandom();
   *(uint64_t*)(out + 8) = UniformRandom();
 }

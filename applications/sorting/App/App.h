@@ -7,6 +7,11 @@
 
 #include "sgx_error.h"
 #include "sgx_eid.h"
+#include "sgx_tcrypto.h"
+#include "sgx_trts.h"
+#include "sgx_thread.h"
+#include "sgx_tseal.h"
+#include <thread>
 
 #ifndef TRUE
 # define TRUE 1

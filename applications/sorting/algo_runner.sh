@@ -4,13 +4,13 @@ source /startsgxenv.sh
 SGX_MODE=HW # HW or SIM
 
 # Algorithms:
-ALGOs=(KWAYBUTTERFLYOSORT KWAYDISTRIBUTIONOSORT KWAYDISTRIBUTIONOSORTSHUFFLED BITONICSORT CABUCKETSORT KWAYBUTTERFLYOSHUFFLE ORSHUFFLE BITONICSHUFFLE CABUCKETSHUFFLE UNOPTBITONICSORT EXTMERGESORT)
+ALGOs=(KWAYBUTTERFLYOSHUFFLE KWAYBUTTERFLYOSORT KWAYDISTRIBUTIONOSORT KWAYDISTRIBUTIONOSORTSHUFFLED BITONICSORT CABUCKETSORT ORSHUFFLE BITONICSHUFFLE CABUCKETSHUFFLE UNOPTBITONICSORT EXTMERGESORT)
 MIN_ELEMENT_SIZE=128 # element size in bytes
 MAX_ELEMENT_SIZE=128
 MIN_SIZE=100000    # input size in number of elements
 MAX_SIZE=10000000
-MIN_ENCLAVE_SIZE=128 # enclave size in MB
-MAX_ENCLAVE_SIZE=128
+MIN_ENCLAVE_SIZE=1280 # enclave size in MB
+MAX_ENCLAVE_SIZE=1280
 IO_ROUNDs=(1) # number of rounds encryption/decryption is performed, used to get breakdown
 CORE_ID=5 # the cpu core id to run the program
 DISK_IO=0 # 0: no disk IO, 1: disk IO
@@ -44,7 +44,7 @@ echo "output to "${FILENAME}
 fi
 for (( encsize=$MIN_ENCLAVE_SIZE; encsize<=$MAX_ENCLAVE_SIZE; encsize*=2 ))
 do
-heapsizeB=$(( encsize * 1000000 ))
+heapsizeB=$(( encsize * 2000000 ))
 hex_encsize=$(printf '%x\n' $heapsizeB)
 
 sed -i "/.*<Heap.*/c\  <HeapMaxSize>0x"${hex_encsize}"</HeapMaxSize>" ./Enclave/Enclave.config.xml
@@ -53,10 +53,12 @@ do
     make clean
     make SGX_MODE=$SGX_MODE SGX_PRERELEASE=1 ELEMENT_SIZE=$s ALGO=$ALGO MIN_SIZE=$MIN_SIZE MAX_SIZE=$MAX_SIZE IO_ROUND=$IO_ROUND DISK_IO=$DISK_IO ENCLAVE_SIZE=$encsize
     if [[ $1 = 1 ]]; then
-        taskset -c ${CORE_ID} ./sort.elf
+        # taskset -c ${CORE_ID} 
+        ./sort.elf
         sleep 1
     else
-        taskset -c ${CORE_ID} stdbuf -oL nohup ./sort.elf &>> $FILENAME < /dev/null
+        # taskset -c ${CORE_ID} 
+        stdbuf -oL nohup ./sort.elf &>> $FILENAME < /dev/null
         sleep 1
         last_line=$(tail -n 1 $FILENAME)
 

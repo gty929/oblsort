@@ -19,7 +19,6 @@ void ActualMain(void) {
   // ret = ecall_pageswap_with_crypt_perf(global_eid);
   // ret = ecall_mergesplit_perf(global_eid);
   //   ret = ecall_mergesplit_compare(global_eid);
-
   if (ret != SGX_SUCCESS) abort();
 
   // printf("Did not abort\n");

@@ -147,6 +147,7 @@ struct Vector {
 
   struct Reader {
     Page cache;
+    RandGen prng;
     Iterator it;
     Iterator end;
     T* curr = (T*)UINT64_MAX;

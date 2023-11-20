@@ -8,6 +8,8 @@
 
 #include "Enclave_u.h"
 #include "sgx_urts.h"
+#include "sgx_tcrypto.h"
+#include <sgx_uswitchless.h>
 
 /* Global EID shared by multiple threads */
 sgx_enclave_id_t global_eid = 0;

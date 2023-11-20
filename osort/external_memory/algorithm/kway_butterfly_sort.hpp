@@ -3,6 +3,7 @@
 #include "external_memory/noncachedvector.hpp"
 #include "param_select.hpp"
 #include "sort_building_blocks.hpp"
+#include "external_memory/par_io.hpp"
 
 /// This file implements the flex-way butterfly osort and oshuffle algorithms.
 
@@ -71,7 +72,7 @@ class ButterflySorter {
   // writer for the first layer of external-memory merge sort
   typename Vector<T>::Writer mergeSortFirstLayerWriter;
 
-  typename IOVector::PrefetchReader inputReader;  // input reader
+  ReaderManager<typename IOVector::PrefetchReader, typename IOVector::Iterator> inputReaderManager;  // input reader
   typename IOVector::Writer outputWriter;         // output writer
   WrappedT* batch;                                // batch for sorting
 
@@ -83,17 +84,20 @@ class ButterflySorter {
   /// @param _heapSize the heap size in bytes
   ButterflySorter(IOIterator inputBeginIt, IOIterator inputEndIt,
                   uint32_t inAuth = 0, uint64_t _heapSize = DEFAULT_HEAP_SIZE)
-      : inputReader(inputBeginIt, inputEndIt, inAuth),
-        mergeSortFirstLayer(
+      : mergeSortFirstLayer(
             task == KWAYBUTTERFLYOSORT ? inputEndIt - inputBeginIt : 0),
         numElementFit(_heapSize / sizeof(WrappedT)) {
     size_t size = inputEndIt - inputBeginIt;
-    batch = new WrappedT[numElementFit];
+    batch = new WrappedT[numElementFit]; // declare ahead to avoid fragmentation
     KWayParams = bestKWayButterflyParams(size, numElementFit, sizeof(T));
+    inputReaderManager.init(inputBeginIt, inputEndIt, inAuth, thread_count);
     Z = KWayParams.Z;
-    Assert(numElementFit > 8 * Z);
+    Assert(numElementFit > 8 * Z * thread_count);
     numElementFit -=
-        divRoundUp(Z * 8 * (sizeof(WrappedT) + 2), sizeof(WrappedT));
+        divRoundUp(Z * 8 * (sizeof(WrappedT) + 2), sizeof(WrappedT)) * thread_count;
+    // deduct the temp memory for merge split
+    delete[] batch;
+    batch = new WrappedT[numElementFit];
     // reserve space for 8 buckets of elements and marks
     numBucketFit = numElementFit / Z;
     numTotalBucket = KWayParams.totalBucket;
@@ -133,36 +137,97 @@ class ButterflySorter {
     uint64_t waySize = numElement / way;
     uint64_t wayBucket = numBucket / way;
     if (innerLayer > 0) {
+
+      #pragma omp parallel for schedule(static)
       for (uint64_t i = 0; i < way; ++i) {
         KWayButterflySortBasic(begin + i * waySize, begin + (i + 1) * waySize,
-                               ioLayer, innerLayer - 1);
+                              ioLayer, innerLayer - 1);
       }
+    
     } else {
       Assert(numBucket == way);
       if (ioLayer == 0) {
         Assert(waySize == Z);
+        typename IOVector::PrefetchReader* inputReader = inputReaderManager.getReader();
+        bool overFlag = !inputReader;
         // tag and pad input
         for (uint64_t i = 0; i < way; ++i) {
+          if (overFlag) {
+            // set rest of the buckets to dummy
+            for (; i < way; ++i) {
+              auto it = begin + i * waySize;
+              for (uint64_t offset = 0; offset < Z; ++offset, ++it) {
+                it->setDummy();
+              }
+            }
+            break;
+          }
           auto it = begin + i * waySize;
           for (uint64_t offset = 0; offset < Z; ++offset, ++it) {
-            if (offset < numRealPerBucket && !inputReader.eof()) {
-              it->setData(inputReader.read());
+            if (offset < numRealPerBucket) {
+              if (inputReader->eof()) {
+                inputReaderManager.returnReader(inputReader);
+                inputReader = inputReaderManager.getReader();
+                if (!inputReader) {
+                  overFlag = true;
+                  // all readers have been consumed, pad dummies to the end
+                  for (; offset < Z; ++offset, ++it) {
+                    it->setDummy();
+                  }
+                  break;
+                }
+              }
+              it->setData(inputReader->read(), inputReader->prng);
             } else {
               it->setDummy();
             }
           }
         }
+        if (inputReader) {
+          inputReaderManager.returnReader(inputReader);
+        }
       }
     }
-    Iterator KWayIts[8];
-    uint8_t* marks = new uint8_t[8 * Z];
-    for (uint64_t j = 0; j < wayBucket; ++j) {
-      for (uint64_t i = 0; i < way; ++i) {
-        KWayIts[i] = begin + (i * wayBucket + j) * Z;
+    
+      #pragma omp parallel for schedule(static)
+      for (uint64_t j = 0; j < wayBucket; ++j) {
+        Iterator KWayIts[8];
+        for (uint64_t i = 0; i < way; ++i) {
+          KWayIts[i] = begin + (i * wayBucket + j) * Z;
+        }
+        WrappedT* temp = new WrappedT[way * Z];
+        uint8_t* marks = new uint8_t[8 * Z];
+
+        /*
+        int keyCounts[way] = {0} ;
+        for (uint64_t i = 0; i < way; ++i) {
+          for (int j = 0; j < Z; ++j) {
+            auto it = KWayIts[i] + j;
+            if (it->tag == 0) {
+              printf("it->tag = 0 at inner layer %d\n", innerLayer);
+              abort();
+            }
+            if (!it->isDummy()) {
+              keyCounts[it->tag % way]++;
+            }
+          }
+        }
+        for (uint64_t i = 0; i < way; ++i) {
+          if (keyCounts[i] >= Z) {
+            for (uint64_t j = 0; j < way; ++j) {
+            printf("keyCounts[%d] = %d, Z = %d\n", j, keyCounts[j], Z);
+          }
+            abort();
+          }
+        }
+        */
+        MergeSplitKWay(KWayIts, way, Z, temp, marks);
+        
+        delete[] temp;
+        delete[] marks;
       }
-      MergeSplitKWay(KWayIts, way, Z, batch + numElementFit, marks);
-    }
-    delete[] marks;
+    
+    
   }
 
   template <class Iterator>
@@ -194,8 +259,9 @@ class ButterflySorter {
       // maximize the chunksize at the last layer
     }
     size_t batchCount = divRoundUp(size, batchSize);
-
+    // printf("batchCount = %d\n", batchCount);
     for (uint64_t batchIdx = 0; batchIdx < batchCount; ++batchIdx) {
+      // printf("batchIdx = %d\n", batchIdx);
       uint64_t intBatchIdx = batchIdx % batchPerEnclave;
       auto batchBegin = batch + intBatchIdx * batchSize;
       if (ioLayer) {  // fetch from intermediate ext vector
@@ -313,6 +379,7 @@ void KWayButterflySort(Iterator begin, Iterator end, uint32_t inAuth,
     CopyOut(Mem.begin(), Mem.end(), begin, inAuth + 1);
     return;
   }
+  // omp_set_num_threads(4);
   ButterflySorter<Iterator, KWAYBUTTERFLYOSORT> sorter(begin, end, inAuth,
                                                        heapSize);
   sorter.sort();

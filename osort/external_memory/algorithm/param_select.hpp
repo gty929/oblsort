@@ -390,7 +390,12 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
   for (int i = 0; i < 7; ++i) {
     size_t logZ = 8 + i;
     size_t Z = 1UL << logZ;
-    size_t M0 = M - divRoundUp((b + 2) * Z * 8, b);
+    size_t perThreadCost = divRoundUp((b + 2) * Z * 8, b);
+    thread_count = MAX_THREAD_COUNT;
+    if (thread_count * perThreadCost > M / 2) {
+      thread_count = M / 2 / perThreadCost;
+    }
+    size_t M0 = M - perThreadCost * thread_count;
     if (Z > N / 2 || 16 * Z > M0) {
       if (i == 0) {
         printf("Input size / memory size too small\n");
@@ -424,6 +429,9 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
       optimalParams.totalBucket = actualBucketCount;
     }
   }
+  // printf("thread_count = %d\n", thread_count);
+  omp_set_num_threads(thread_count);
+  // printf("set done\n");
   return optimalParams;
 }
 
