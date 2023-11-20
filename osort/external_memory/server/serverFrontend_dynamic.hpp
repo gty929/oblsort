@@ -32,8 +32,6 @@ struct DynamicServerFrontendInstance {
 
   size_t sizeOfT;
 
-  uint8_t* bufferEncrypted;
-
   AllocatorSlot slot;
 
   typedef union {
@@ -57,11 +55,11 @@ struct DynamicServerFrontendInstance {
       nounce = other.nounce;
     }
     other.slot.base = -1;
-    bufferEncrypted = (uint8_t*)malloc(sizeOfT + AES_BLOCK_SIZE);
-    if (!bufferEncrypted) {
-      printf("not enough space to launch frontend encrypted buffer page\n");
-      abort();
-    }
+    // bufferEncrypted = (uint8_t*)malloc(sizeOfT + AES_BLOCK_SIZE);
+    // if (!bufferEncrypted) {
+    //   printf("not enough space to launch frontend encrypted buffer page\n");
+    //   abort();
+    // }
   }
 
   DynamicServerFrontendInstance(BackendType& _backend, uint64_t initialSize,
@@ -77,15 +75,15 @@ struct DynamicServerFrontendInstance {
       nounce.identifiers.counterPart = UniformRandom32();
     }
 
-    bufferEncrypted = (uint8_t*)malloc(sizeOfT + AES_BLOCK_SIZE);
-    if (!bufferEncrypted) {
-      printf("not enough space to launch frontend encrypted buffer page\n");
-      abort();
-    }
+    
+    // if (!bufferEncrypted) {
+    //   printf("not enough space to launch frontend encrypted buffer page\n");
+    //   abort();
+    // }
   }
 
   ~DynamicServerFrontendInstance() {
-    free(bufferEncrypted);
+    // free(bufferEncrypted);
     if (slot.base == -1) {
       return;
     }
@@ -99,6 +97,7 @@ struct DynamicServerFrontendInstance {
 
   void Write(const IndexType i, const void* in, uint32_t counter) {
     // static_assert(AUTH);
+    uint8_t* bufferEncrypted = (uint8_t*)malloc(sizeOfT + AES_BLOCK_SIZE);
     PERFCTR_INCREMENT(writeCount);
 
     nounce_t nounceCopy = nounce;
@@ -110,6 +109,7 @@ struct DynamicServerFrontendInstance {
     }
     backend.Write(slot.base + i * (sizeOfT + AES_BLOCK_SIZE),
                   sizeOfT + AES_BLOCK_SIZE, bufferEncrypted);
+    free(bufferEncrypted);
   }
 
   void Read(const IndexType i, void* out) { Read(i, out, 0); }
@@ -119,6 +119,7 @@ struct DynamicServerFrontendInstance {
     nounce_t nounceCopy = nounce;
     nounceCopy.identifiers.indexPart ^= i;
     nounceCopy.identifiers.counterPart ^= counter;
+    uint8_t* bufferEncrypted = (uint8_t*)malloc(sizeOfT + AES_BLOCK_SIZE);
     backend.Read(slot.base + i * (sizeOfT + AES_BLOCK_SIZE),
                  sizeOfT + AES_BLOCK_SIZE, bufferEncrypted);
     for (int r = 0; r < IO_ROUND; ++r) {
@@ -130,6 +131,7 @@ struct DynamicServerFrontendInstance {
         abort();
       }
     }
+    free(bufferEncrypted);
   }
 };
 

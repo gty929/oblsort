@@ -265,6 +265,7 @@ class ButterflySorter {
       uint64_t intBatchIdx = batchIdx % batchPerEnclave;
       auto batchBegin = batch + intBatchIdx * batchSize;
       if (ioLayer) {  // fetch from intermediate ext vector
+        #pragma omp parallel for schedule(static)
         for (uint64_t bucketIdx = 0; bucketIdx < numInternalWay; ++bucketIdx) {
           auto extBeginIt = begin + (batchIdx + fetchInterval * bucketIdx) * Z;
           auto intBeginIt = batchBegin + bucketIdx * Z;
@@ -316,6 +317,7 @@ class ButterflySorter {
         }
       } else {  // not last layer, write to intermediate ext vector
         Assert(batchPerEnclave == 1);
+        #pragma omp parallel for schedule(static)
         for (uint64_t bucketIdx = 0; bucketIdx < numInternalWay; ++bucketIdx) {
           auto extBeginIt = begin + (batchIdx + fetchInterval * bucketIdx) * Z;
           auto intBeginIt = batch + bucketIdx * Z;
