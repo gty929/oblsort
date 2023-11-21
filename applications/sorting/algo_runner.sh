@@ -14,6 +14,7 @@ MAX_ENCLAVE_SIZE=1280
 IO_ROUNDs=(1) # number of rounds encryption/decryption is performed, used to get breakdown
 CORE_ID=5 # the cpu core id to run the program
 DISK_IO=0 # 0: no disk IO, 1: disk IO
+THREAD_COUNT=16
 
 for IO_ROUND in ${IO_ROUNDs[@]}; do
 if [ $IO_ROUND = 0 ]
@@ -48,6 +49,7 @@ heapsizeB=$(( encsize * 2000000 ))
 hex_encsize=$(printf '%x\n' $heapsizeB)
 
 sed -i "/.*<Heap.*/c\  <HeapMaxSize>0x"${hex_encsize}"</HeapMaxSize>" ./Enclave/Enclave.config.xml
+sed -i "/.*<TCSNum>.*/c\  <TCSNum>"${THREAD_COUNT}"</TCSNum>" ./Enclave/Enclave.config.xml
 for (( s=$MIN_ELEMENT_SIZE; s<=$MAX_ELEMENT_SIZE; s=s*3/2 ))
 do
     make clean

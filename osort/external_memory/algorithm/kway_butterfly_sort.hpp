@@ -197,30 +197,6 @@ class ButterflySorter {
         }
         WrappedT* temp = new WrappedT[way * Z];
         uint8_t* marks = new uint8_t[8 * Z];
-
-        /*
-        int keyCounts[way] = {0} ;
-        for (uint64_t i = 0; i < way; ++i) {
-          for (int j = 0; j < Z; ++j) {
-            auto it = KWayIts[i] + j;
-            if (it->tag == 0) {
-              printf("it->tag = 0 at inner layer %d\n", innerLayer);
-              abort();
-            }
-            if (!it->isDummy()) {
-              keyCounts[it->tag % way]++;
-            }
-          }
-        }
-        for (uint64_t i = 0; i < way; ++i) {
-          if (keyCounts[i] >= Z) {
-            for (uint64_t j = 0; j < way; ++j) {
-            printf("keyCounts[%d] = %d, Z = %d\n", j, keyCounts[j], Z);
-          }
-            abort();
-          }
-        }
-        */
         MergeSplitKWay(KWayIts, way, Z, temp, marks);
         
         delete[] temp;
@@ -265,7 +241,8 @@ class ButterflySorter {
       uint64_t intBatchIdx = batchIdx % batchPerEnclave;
       auto batchBegin = batch + intBatchIdx * batchSize;
       if (ioLayer) {  // fetch from intermediate ext vector
-        #pragma omp parallel for schedule(static)
+        int chunkSize = std::max(1, (int)numInternalWay / thread_count);
+        #pragma omp parallel for schedule(static, chunkSize)
         for (uint64_t bucketIdx = 0; bucketIdx < numInternalWay; ++bucketIdx) {
           auto extBeginIt = begin + (batchIdx + fetchInterval * bucketIdx) * Z;
           auto intBeginIt = batchBegin + bucketIdx * Z;
@@ -279,7 +256,8 @@ class ButterflySorter {
         const auto cmpTag = [](const auto& a, const auto& b) {
           return a.tag < b.tag;
         };
-        #pragma omp parallel for schedule(static)
+        int chunkSize = std::max(1, (int)numInternalWay / thread_count);
+        #pragma omp parallel for schedule(static, chunkSize)
         for (size_t i = 0; i < numInternalWay; ++i) {
           auto it = batchBegin + i * Z;
           Assert(it + Z <= batch + numElementFit);
@@ -334,7 +312,8 @@ class ButterflySorter {
         }
       } else {  // not last layer, write to intermediate ext vector
         Assert(batchPerEnclave == 1);
-        #pragma omp parallel for schedule(static)
+        size_t chunkSize = std::max(1, (int)numInternalWay / thread_count);
+        #pragma omp parallel for schedule(static, chunkSize)
         for (uint64_t bucketIdx = 0; bucketIdx < numInternalWay; ++bucketIdx) {
           auto extBeginIt = begin + (batchIdx + fetchInterval * bucketIdx) * Z;
           auto intBeginIt = batch + bucketIdx * Z;
