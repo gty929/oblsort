@@ -147,15 +147,19 @@ struct Vector {
 
   struct Reader {
     Page cache;
-    RandGen prng;
+    RandGen* prng;
     Iterator it;
     Iterator end;
     T* curr = (T*)UINT64_MAX;
     uint32_t counter;
-    Reader() {}
+    Reader() {
+      prng = new RandGen();
+    }
 
     Reader(Iterator _begin, Iterator _end, uint32_t _counter = 0)
-        : it(_begin), end(_end), counter(_counter) {}
+        : it(_begin), end(_end), counter(_counter) {
+          prng = new RandGen();
+        }
 
     void init(Iterator _begin, Iterator _end, uint32_t _counter = 0) {
       it = _begin;
@@ -168,7 +172,9 @@ struct Vector {
       return pageIdx;
     }
 
-    virtual ~Reader() = default;
+    virtual ~Reader() {
+      delete prng;
+    }
 
     T& get() {
       Assert(!eof());

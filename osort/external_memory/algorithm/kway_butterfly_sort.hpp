@@ -177,7 +177,7 @@ class ButterflySorter {
                   break;
                 }
               }
-              it->setData(inputReader->read(), inputReader->prng);
+              it->setData(inputReader->read(), *inputReader->prng);
             } else {
               it->setDummy();
             }
