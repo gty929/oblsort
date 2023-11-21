@@ -72,8 +72,8 @@ class ButterflySorter {
   // writer for the first layer of external-memory merge sort
   typename Vector<T>::Writer mergeSortFirstLayerWriter;
 
-  ReaderManager<typename IOVector::PrefetchReader, typename IOVector::Iterator> inputReaderManager;  // input reader
-  typename IOVector::Writer outputWriter;         // output writer
+  RWManager<typename IOVector::PrefetchReader, typename IOVector::Iterator> inputReaderManager;  // input reader
+  RWManager<typename IOVector::Writer, typename IOVector::Iterator> outputWriterManager;         // output writer
   WrappedT* batch;                                // batch for sorting
 
  public:
@@ -108,7 +108,7 @@ class ButterflySorter {
                                      mergeSortFirstLayer.end());
     } else {
       static_assert(task == KWAYBUTTERFLYOSHUFFLE);
-      outputWriter.init(inputBeginIt, inputEndIt, inAuth + 1);
+      outputWriterManager.init(inputBeginIt, inputEndIt, inAuth + 1, thread_count);
     }
   }
 
@@ -148,7 +148,7 @@ class ButterflySorter {
       Assert(numBucket == way);
       if (ioLayer == 0) {
         Assert(waySize == Z);
-        typename IOVector::PrefetchReader* inputReader = inputReaderManager.getReader();
+        typename IOVector::PrefetchReader* inputReader = inputReaderManager.getRW();
         bool overFlag = !inputReader;
         // tag and pad input
         for (uint64_t i = 0; i < way; ++i) {
@@ -166,8 +166,8 @@ class ButterflySorter {
           for (uint64_t offset = 0; offset < Z; ++offset, ++it) {
             if (offset < numRealPerBucket) {
               if (inputReader->eof()) {
-                inputReaderManager.returnReader(inputReader);
-                inputReader = inputReaderManager.getReader();
+                inputReaderManager.returnRW(inputReader);
+                inputReader = inputReaderManager.getRW();
                 if (!inputReader) {
                   overFlag = true;
                   // all readers have been consumed, pad dummies to the end
@@ -184,7 +184,7 @@ class ButterflySorter {
           }
         }
         if (inputReader) {
-          inputReaderManager.returnReader(inputReader);
+          inputReaderManager.returnRW(inputReader);
         }
       }
     }
@@ -279,18 +279,35 @@ class ButterflySorter {
         const auto cmpTag = [](const auto& a, const auto& b) {
           return a.tag < b.tag;
         };
+        #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < numInternalWay; ++i) {
           auto it = batchBegin + i * Z;
           Assert(it + Z <= batch + numElementFit);
           BitonicSort(it, it + Z, cmpTag);
           // for shuffling, output directly
+          
           if constexpr (task == KWAYBUTTERFLYOSHUFFLE) {
+            auto* outputWriter = outputWriterManager.getRW();
+            if (!outputWriter) {
+              printf("outputWriter is null\n");
+              abort();
+            }
             for (auto fromIt = it; fromIt != it + Z; ++fromIt) {
               if (!fromIt->isDummy()) {
-                outputWriter.write(fromIt->getData());
+                if (outputWriter->eof()) {
+                  outputWriterManager.returnRW(outputWriter);
+                  outputWriter = outputWriterManager.getRW();
+                  if (!outputWriter) {
+                    printf("outputWriter is null\n");
+                    abort();
+                  }
+                } 
+                outputWriter->write(fromIt->getData());
               }
             }
+            outputWriterManager.returnRW(outputWriter);
           }
+          
         }
         if (task == KWAYBUTTERFLYOSORT && (intBatchIdx == batchPerEnclave - 1 ||
                                            batchIdx == batchCount - 1)) {
@@ -330,7 +347,7 @@ class ButterflySorter {
       if constexpr (task == KWAYBUTTERFLYOSORT) {
         mergeSortFirstLayerWriter.flush();
       } else {
-        outputWriter.flush();
+        outputWriterManager.flush();
       }
     }
   }

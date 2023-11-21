@@ -240,6 +240,50 @@ static bool failureProbKWayDistriSortWithinTarget(size_t Z, size_t N, size_t B,
   return failProb < target;
 }
 
+
+template <typename int_type>
+ int_type optGroups(std::vector<std::vector<int_type>>& result, const std::vector<int_type>& factors, int_type groupCount, int_type currProduct = 1, int_type currIdx = 0) {
+  if (groupCount == 1) {
+    result.clear();
+    result.emplace_back(factors);
+    int_type prod = 1;
+    for (int_type factor : factors) {
+      prod *= factor;
+    }
+    return prod;
+  }
+  if (factors.size() < groupCount) {
+    result.clear();
+    for (int_type factor : factors) {
+      result.emplace_back();
+      result.back().emplace_back(factor);
+    }
+    if (currProduct != 1) {
+      result.emplace_back();
+    }
+  }
+  int_type minProduct = INT32_MAX;
+  if (currProduct > 1) {
+    // can start a new group
+    minProduct = std::max(currProduct, optGroups(result, factors, groupCount - 1));
+    result.emplace_back(); // add an empty group
+  }
+  // when its a new group, always include the first factor in the group
+  for (int_type i = currIdx; i < (currProduct == 1 ? 1 : factors.size()); ++i) {
+    std::vector<int_type> factorsCopy = factors;
+    factorsCopy.erase(factorsCopy.begin() + i);
+    std::vector<std::vector<int_type>> tempResult;
+    int_type tempProd = optGroups(tempResult, factorsCopy, groupCount, currProduct * factors[i], i + 1);
+    if (tempProd < minProduct) {
+      minProduct = tempProd;
+      result = tempResult;
+      result.back().emplace_back(factors[i]);
+    }
+  }
+  return minProduct;
+}
+
+
 /// @brief solve the optimal way of flex-way butterfly/distribution sort
 class ButterflyWaySolver {
  private:
@@ -327,10 +371,13 @@ class ButterflyWaySolver {
     uint64_t accWays = 1;
     auto begin = optimalWays.begin();
     auto it = begin;
+    uint64_t numLayer = 0;
+    // the order in optimalWays should already minimize the number of layers
     for (; it != optimalWays.end(); ++it) {
       if (accWays * (*it) > maxWayInternal) {
         if (begin != it) {
-          output.emplace_back(begin, it);
+          // output.emplace_back(begin, it);
+          ++numLayer;
         }
         begin = it;
         accWays = *it;
@@ -338,7 +385,17 @@ class ButterflyWaySolver {
         accWays *= (*it);
       }
     }
-    output.emplace_back(begin, it);
+    ++numLayer;
+    // printf("numLayer = %lu\n", numLayer);
+    // for (auto way : optimalWays) {
+    //   printf("%lu * ", way);
+    // }
+    // printf("\n");
+    optGroups(output, optimalWays, numLayer);
+    // output.emplace_back(begin, it);
+
+    // now minmize the maximum number of ways in each layer
+    
     return cost;
   }
 };
@@ -429,7 +486,13 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
       optimalParams.totalBucket = actualBucketCount;
     }
   }
-  // printf("thread_count = %d\n", thread_count);
+  for (auto& vec : optimalParams.ways) {
+      for (auto way : vec) {
+        printf("%lu * ", way);
+      }
+      printf("\n");
+    }
+  printf("thread_count = %d\n", thread_count);
   omp_set_num_threads(thread_count);
   // printf("set done\n");
   return optimalParams;
