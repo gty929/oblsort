@@ -342,7 +342,6 @@ class ButterflySorter {
         }
       }
     }
-
     if (isLastLayer) {
       if constexpr (task == KWAYBUTTERFLYOSORT) {
         mergeSortFirstLayerWriter.flush();

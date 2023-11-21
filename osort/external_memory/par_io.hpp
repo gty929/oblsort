@@ -31,6 +31,7 @@ public:
 template <typename BaseRW, class Iterator>
 class RWManager {
     BaseRW* baseRWs;
+    int parCount;
     ThreadSafeQueue<BaseRW*> rwQueue;
     std::atomic_int availableRWCount;
     using TRef = std::iterator_traits<Iterator>::reference;
@@ -51,6 +52,7 @@ public:
         assert(size_per_rw >= begin.getVector().item_per_page);
         parCount = divRoundUp(end - begin, size_per_rw); // adjust the number of reader / writer
         availableRWCount = parCount;
+        this->parCount = parCount;
         baseRWs = new BaseRW[parCount];
         for (int i = 0; i < parCount; i++) {
             Iterator baseRWBegin = begin + size_per_rw * i;
@@ -73,6 +75,7 @@ public:
 
     void returnRW(BaseRW* rw) { 
         if (rw->eof()) {
+            // printf("availableRWCount reduced to %d\n", availableRWCount);
             availableRWCount--;
             return; // this rw has been consumed
         }
@@ -80,7 +83,7 @@ public:
 
     // flush all pages
     void flush() {
-        for (int i = 0; i < availableRWCount; i++) {
+        for (int i = 0; i < parCount; i++) {
             baseRWs[i].flush();
         }
     }
