@@ -486,6 +486,7 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
       optimalParams.totalBucket = actualBucketCount;
     }
   }
+  printf("\n");
   for (auto& vec : optimalParams.ways) {
       for (auto way : vec) {
         printf("%lu * ", way);
@@ -493,6 +494,8 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
       printf("\n");
     }
   printf("thread_count = %d\n", thread_count);
+  printf("Z = %lu\n", optimalParams.Z);
+  omp_set_nested(0);
   omp_set_num_threads(thread_count);
   // printf("set done\n");
   return optimalParams;

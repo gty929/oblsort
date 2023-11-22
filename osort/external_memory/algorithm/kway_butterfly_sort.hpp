@@ -188,8 +188,8 @@ class ButterflySorter {
         }
       }
     }
-    
-      #pragma omp parallel for schedule(static)
+    int chunkSize = std::max(1, (int)wayBucket / thread_count);
+      #pragma omp parallel for schedule(static, chunkSize)
       for (uint64_t j = 0; j < wayBucket; ++j) {
         Iterator KWayIts[8];
         for (uint64_t i = 0; i < way; ++i) {
@@ -202,8 +202,83 @@ class ButterflySorter {
         delete[] temp;
         delete[] marks;
       }
+  }
+
+  /// @brief Base case of flex-way butterfly o-sort when input fits in memory
+  /// @tparam Iterator should support random access
+  /// @param begin begin iterator of the input array
+  /// @param end end iterator of the input array
+  /// @param ioLayer current layer of butterfly network by page swap passes
+  /// @param innerLayer current layer of butterfly network within the batch
+  template <class Iterator>
+  void KWayButterflySortBasicNonRecursive(Iterator begin, Iterator end, size_t ioLayer,
+                              size_t innerLayer) {
+    uint64_t numElement = end - begin;
+    uint64_t numBucket = numElement / Z;
     
-    
+    for (uint64_t layer = 0, stride = 1; layer <= innerLayer; ++layer) {
+      uint64_t way = KWayParams.ways[ioLayer][layer];
+      uint64_t wayBucket = numBucket / way;
+
+      #pragma omp parallel for schedule(static)
+      for (uint64_t i = 0; i < wayBucket; ++i) {
+        // merge read input to obtain better locality
+        if (layer == 0 && ioLayer == 0) {
+          typename IOVector::PrefetchReader* inputReader = inputReaderManager.getRW();
+          bool overFlag = !inputReader;
+          // tag and pad input
+          for (uint64_t j = 0; j < way; ++j) {
+            if (overFlag) {
+              // set rest of the buckets to dummy
+              for (; j < way; ++j) {
+                auto it = begin + (i * way + j) * Z;
+                for (uint64_t offset = 0; offset < Z; ++offset, ++it) {
+                  it->setDummy();
+                }
+              }
+              break;
+            }
+            auto it = begin + (i * way + j) * Z;
+            for (uint64_t offset = 0; offset < Z; ++offset, ++it) {
+              if (offset < numRealPerBucket) {
+                if (inputReader->eof()) {
+                  inputReaderManager.returnRW(inputReader);
+                  inputReader = inputReaderManager.getRW();
+                  if (!inputReader) {
+                    overFlag = true;
+                    // all readers have been consumed, pad dummies to the end
+                    for (; offset < Z; ++offset, ++it) {
+                      it->setDummy();
+                    }
+                    break;
+                  }
+                }
+                it->setData(inputReader->read(), *inputReader->prng);
+              } else {
+                it->setDummy();
+              }
+            }
+          }
+          if (inputReader) {
+            inputReaderManager.returnRW(inputReader);
+          }
+        }
+        uint64_t groupIdx = i / stride;
+        uint64_t groupOffset = i % stride;
+        Iterator KWayIts[8];
+        for (uint64_t j = 0; j < way; ++j) {
+          KWayIts[j] = begin + ((j + groupIdx * way) * stride + groupOffset) * Z;
+        }
+        WrappedT* temp = new WrappedT[way * Z];
+        uint8_t* marks = new uint8_t[8 * Z];
+        MergeSplitKWay(KWayIts, way, Z, temp, marks);
+        
+        delete[] temp;
+        delete[] marks;
+      }
+
+      stride *= way;
+    }
   }
 
   template <class Iterator>
@@ -249,7 +324,7 @@ class ButterflySorter {
           CopyIn(extBeginIt, extBeginIt + Z, intBeginIt, ioLayer - 1);
         }
       }
-      KWayButterflySortBasic(batchBegin, batchBegin + batchSize, ioLayer,
+      KWayButterflySortBasicNonRecursive(batchBegin, batchBegin + batchSize, ioLayer,
                              KWayParams.ways[ioLayer].size() - 1);
       if (isLastLayer) {
         // last layer, combine with bitonic sort and output

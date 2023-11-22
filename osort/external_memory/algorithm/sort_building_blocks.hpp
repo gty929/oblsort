@@ -272,6 +272,7 @@ void Interleave(Iterator begin, Iterator end, MarkIterator marksBegin,
     condSwap(swapFlag, *left, *right);
   }
   Interleave(begin, mid, marksBegin, marksMid, k);
+  // #pragma omp task untied if (size * sizeof(*begin) > 1 << 20)
   Interleave(mid, end, marksMid, marksEnd, k);
 }
 
