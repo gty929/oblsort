@@ -4,6 +4,7 @@
 #include "param_select.hpp"
 #include "sort_building_blocks.hpp"
 #include "external_memory/par_io.hpp"
+// #include <unordered_set>
 
 /// This file implements the flex-way butterfly osort and oshuffle algorithms.
 
@@ -303,38 +304,50 @@ class ButterflySorter {
                           ioLayer - 1);
       }
     }
-    size_t batchSize = numInternalWay * Z;
-    size_t batchPerEnclave = 1;
-    if (task == KWAYBUTTERFLYOSORT && isLastLayer) {
-      batchPerEnclave = numElementFit / batchSize;
-      // maximize the chunksize at the last layer
+    if (size / Z % numInternalWay != 0) {
+      printf("size = %d, Z = %d, numInternalWay = %d\n", size, Z, numInternalWay);
+      abort();
     }
+    size_t bucketPerBatch = std::min(size / Z, numBucketFit / numInternalWay * numInternalWay);
+    Assert(bucketPerBatch > 0); 
+    size_t batchSize = bucketPerBatch * Z;
     size_t batchCount = divRoundUp(size, batchSize);
-    // printf("batchCount = %d\n", batchCount);
+    // std::unordered_set<size_t> extIts;
     for (uint64_t batchIdx = 0; batchIdx < batchCount; ++batchIdx) {
       // printf("batchIdx = %d\n", batchIdx);
-      uint64_t intBatchIdx = batchIdx % batchPerEnclave;
-      auto batchBegin = batch + intBatchIdx * batchSize;
+      size_t bucketThisBatch = bucketPerBatch;
+      if (batchIdx == batchCount - 1) {
+        bucketThisBatch = size / Z - bucketPerBatch * (batchCount - 1);
+      }
       if (ioLayer) {  // fetch from intermediate ext vector
-        int chunkSize = std::max(1, (int)numInternalWay / thread_count);
+        int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
+        size_t batchWayRatio = bucketPerBatch / numInternalWay;
         #pragma omp parallel for schedule(static, chunkSize)
-        for (uint64_t bucketIdx = 0; bucketIdx < numInternalWay; ++bucketIdx) {
-          auto extBeginIt = begin + (batchIdx + fetchInterval * bucketIdx) * Z;
-          auto intBeginIt = batchBegin + bucketIdx * Z;
+        for (uint64_t bucketIdx = 0; bucketIdx < bucketThisBatch; ++bucketIdx) {
+          auto extBeginIt = begin + (batchIdx * batchWayRatio + bucketIdx / numInternalWay + fetchInterval * (bucketIdx % numInternalWay)) * Z;
+          // if (extIts.find(extBeginIt.get_m_ptr()) != extIts.end()) {
+          //   printf("extBeginIt = %d\n", extBeginIt.get_m_ptr());
+          //   abort();
+          // }
+          // extIts.insert(extBeginIt.get_m_ptr());
+          auto intBeginIt = batch + bucketIdx * Z;
+          // printf("batchCount = %d, bucketPerBatch = %d, bucketThisBatch = %d\n", batchCount, bucketPerBatch, bucketThisBatch);
+          // printf("bucketIdx = %d, batchIdx = %d, fetchInterval = %d, Z = %d, extBeginIt = %d, intBeginIt = %d\n", bucketIdx, batchIdx, fetchInterval, Z, extBeginIt - begin, intBeginIt - batch);
           CopyIn(extBeginIt, extBeginIt + Z, intBeginIt, ioLayer - 1);
+          // printf("copy in done\n");
         }
       }
-      KWayButterflySortBasicNonRecursive(batchBegin, batchBegin + batchSize, ioLayer,
+      KWayButterflySortBasicNonRecursive(batch, batch + batchSize, ioLayer,
                              KWayParams.ways[ioLayer].size() - 1);
       if (isLastLayer) {
         // last layer, combine with bitonic sort and output
         const auto cmpTag = [](const auto& a, const auto& b) {
           return a.tag < b.tag;
         };
-        int chunkSize = std::max(1, (int)numInternalWay / thread_count);
+        int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
         #pragma omp parallel for schedule(static, chunkSize)
-        for (size_t i = 0; i < numInternalWay; ++i) {
-          auto it = batchBegin + i * Z;
+        for (size_t i = 0; i < bucketThisBatch; ++i) {
+          auto it = batch + i * Z;
           Assert(it + Z <= batch + numElementFit);
           BitonicSort(it, it + Z, cmpTag);
           // for shuffling, output directly
@@ -362,18 +375,13 @@ class ButterflySorter {
           }
           
         }
-        if (task == KWAYBUTTERFLYOSORT && (intBatchIdx == batchPerEnclave - 1 ||
-                                           batchIdx == batchCount - 1)) {
+        if (task == KWAYBUTTERFLYOSORT) {
           // sort the batch and write to first layer of merge sort
           const auto cmpVal = [](const auto& a, const auto& b) {
             return a.v < b.v;
           };
-          size_t batchLocalCount = batchIdx == batchCount - 1
-                                       ? batchIdx % batchPerEnclave + 1
-                                       : batchPerEnclave;
-          Assert(batchSize * batchLocalCount <= numElementFit);
           auto realEnd =
-              partitionDummy(batch, batch + batchSize * batchLocalCount);
+              partitionDummy(batch, batch + batchSize);
           // partition dummies to the end
           Assert(realEnd <= batch + numElementFit);
           std::sort(batch, realEnd, cmpVal);
@@ -386,11 +394,11 @@ class ButterflySorter {
                                        mergeSortFirstLayerWriter.it);
         }
       } else {  // not last layer, write to intermediate ext vector
-        Assert(batchPerEnclave == 1);
-        size_t chunkSize = std::max(1, (int)numInternalWay / thread_count);
+        size_t batchWayRatio = bucketPerBatch / numInternalWay;
+        size_t chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
         #pragma omp parallel for schedule(static, chunkSize)
-        for (uint64_t bucketIdx = 0; bucketIdx < numInternalWay; ++bucketIdx) {
-          auto extBeginIt = begin + (batchIdx + fetchInterval * bucketIdx) * Z;
+        for (uint64_t bucketIdx = 0; bucketIdx < bucketThisBatch; ++bucketIdx) {
+          auto extBeginIt = begin + (batchIdx * batchWayRatio + bucketIdx / numInternalWay + fetchInterval * (bucketIdx % numInternalWay)) * Z;
           auto intBeginIt = batch + bucketIdx * Z;
           CopyOut(intBeginIt, intBeginIt + Z, extBeginIt, ioLayer);
         }
