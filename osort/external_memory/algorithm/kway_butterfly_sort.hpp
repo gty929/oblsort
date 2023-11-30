@@ -4,6 +4,7 @@
 #include "param_select.hpp"
 #include "sort_building_blocks.hpp"
 #include "external_memory/par_io.hpp"
+// #include <atomic>
 // #include <unordered_set>
 
 /// This file implements the flex-way butterfly osort and oshuffle algorithms.
@@ -76,7 +77,6 @@ class ButterflySorter {
   RWManager<typename IOVector::PrefetchReader, typename IOVector::Iterator> inputReaderManager;  // input reader
   RWManager<typename IOVector::Writer, typename IOVector::Iterator> outputWriterManager;         // output writer
   WrappedT* batch;                                // batch for sorting
-
  public:
   /// @brief Construct a new Butterfly Sorter object
   /// @param inputBeginIt the begin iterator of the input array
@@ -288,128 +288,134 @@ class ButterflySorter {
   }
 
   template <class Iterator>
-  void KWayButterflySort(Iterator begin, Iterator end, size_t ioLayer) {
-    bool isLastLayer = ioLayer == KWayParams.ways.size() - 1;
-    size_t numInternalWay = getVecProduct(KWayParams.ways[ioLayer]);
-    size_t fetchInterval = 1;
-    for (size_t layer = 0; layer < ioLayer; ++layer) {
-      fetchInterval *= getVecProduct(KWayParams.ways[layer]);
-    }
-    size_t size = end - begin;
-    Assert(size % numInternalWay == 0);
-    size_t subSize = size / numInternalWay;
-    if (ioLayer > 0) {
-      for (size_t i = 0; i < numInternalWay; ++i) {
-        KWayButterflySort(begin + i * subSize, begin + (i + 1) * subSize,
-                          ioLayer - 1);
+  void KWayButterflySort(Iterator begin, Iterator end, size_t maxIoLayer) {
+    for (size_t ioLayer = 0; ioLayer <= maxIoLayer; ++ioLayer) {
+      bool isLastLayer = ioLayer == maxIoLayer;
+      size_t numInternalWay = getVecProduct(KWayParams.ways[ioLayer]);
+      size_t fetchInterval = 1;
+      for (size_t layer = 0; layer < ioLayer; ++layer) {
+        fetchInterval *= getVecProduct(KWayParams.ways[layer]);
       }
-    }
-    if (size / Z % numInternalWay != 0) {
-      printf("size = %d, Z = %d, numInternalWay = %d\n", size, Z, numInternalWay);
-      abort();
-    }
-    size_t bucketPerBatch = std::min(size / Z, numBucketFit / numInternalWay * numInternalWay);
-    Assert(bucketPerBatch > 0); 
-    size_t batchSize = bucketPerBatch * Z;
-    size_t batchCount = divRoundUp(size, batchSize);
-    // std::unordered_set<size_t> extIts;
-    for (uint64_t batchIdx = 0; batchIdx < batchCount; ++batchIdx) {
-      // printf("batchIdx = %d\n", batchIdx);
-      size_t bucketThisBatch = bucketPerBatch;
-      if (batchIdx == batchCount - 1) {
-        bucketThisBatch = size / Z - bucketPerBatch * (batchCount - 1);
+      size_t size = end - begin;
+      size_t numInterval = size / Z / fetchInterval;
+      Assert(size % numInternalWay == 0);
+      // size_t subSize = size / numInternalWay;
+      // if (ioLayer > 0) {
+      //   for (size_t i = 0; i < numInternalWay; ++i) {
+      //     KWayButterflySort(begin + i * subSize, begin + (i + 1) * subSize,
+      //                       ioLayer - 1);
+      //   }
+      // }
+      if (size / Z % numInternalWay != 0) {
+        printf("size = %d, Z = %d, numInternalWay = %d\n", size, Z, numInternalWay);
+        abort();
       }
-      if (ioLayer) {  // fetch from intermediate ext vector
-        int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
-        size_t batchWayRatio = bucketPerBatch / numInternalWay;
-        #pragma omp parallel for schedule(static, chunkSize)
-        for (uint64_t bucketIdx = 0; bucketIdx < bucketThisBatch; ++bucketIdx) {
-          auto extBeginIt = begin + (batchIdx * batchWayRatio + bucketIdx / numInternalWay + fetchInterval * (bucketIdx % numInternalWay)) * Z;
-          // if (extIts.find(extBeginIt.get_m_ptr()) != extIts.end()) {
-          //   printf("extBeginIt = %d\n", extBeginIt.get_m_ptr());
-          //   abort();
-          // }
-          // extIts.insert(extBeginIt.get_m_ptr());
-          auto intBeginIt = batch + bucketIdx * Z;
-          // printf("batchCount = %d, bucketPerBatch = %d, bucketThisBatch = %d\n", batchCount, bucketPerBatch, bucketThisBatch);
-          // printf("bucketIdx = %d, batchIdx = %d, fetchInterval = %d, Z = %d, extBeginIt = %d, intBeginIt = %d\n", bucketIdx, batchIdx, fetchInterval, Z, extBeginIt - begin, intBeginIt - batch);
-          CopyIn(extBeginIt, extBeginIt + Z, intBeginIt, ioLayer - 1);
-          // printf("copy in done\n");
+      size_t bucketPerBatch = std::min(size / Z, numBucketFit / numInternalWay * numInternalWay);
+      Assert(bucketPerBatch > 0); 
+      size_t batchSize = bucketPerBatch * Z;
+      size_t batchCount = divRoundUp(size, batchSize);
+      
+      // std::unordered_set<size_t> extIts;
+      std::mutex m;
+      for (uint64_t batchIdx = 0; batchIdx < batchCount; ++batchIdx) {
+        // printf("batchIdx = %d\n", batchIdx);
+        size_t bucketThisBatch = bucketPerBatch;
+        if (batchIdx == batchCount - 1) {
+          bucketThisBatch = size / Z - bucketPerBatch * (batchCount - 1);
         }
-      }
-      KWayButterflySortBasicNonRecursive(batch, batch + batchSize, ioLayer,
-                             KWayParams.ways[ioLayer].size() - 1);
-      if (isLastLayer) {
-        // last layer, combine with bitonic sort and output
-        const auto cmpTag = [](const auto& a, const auto& b) {
-          return a.tag < b.tag;
-        };
-        int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
-        #pragma omp parallel for schedule(static, chunkSize)
-        for (size_t i = 0; i < bucketThisBatch; ++i) {
-          auto it = batch + i * Z;
-          Assert(it + Z <= batch + numElementFit);
-          BitonicSort(it, it + Z, cmpTag);
-          // for shuffling, output directly
+        if (ioLayer) {  // fetch from intermediate ext vector
+          int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
+          size_t batchWayRatio = bucketPerBatch / numInternalWay;
           
-          if constexpr (task == KWAYBUTTERFLYOSHUFFLE) {
-            auto* outputWriter = outputWriterManager.getRW();
-            if (!outputWriter) {
-              printf("outputWriter is null\n");
-              abort();
-            }
-            for (auto fromIt = it; fromIt != it + Z; ++fromIt) {
-              if (!fromIt->isDummy()) {
-                if (outputWriter->eof()) {
-                  outputWriterManager.returnRW(outputWriter);
-                  outputWriter = outputWriterManager.getRW();
-                  if (!outputWriter) {
-                    printf("outputWriter is null\n");
-                    abort();
-                  }
-                } 
-                outputWriter->write(fromIt->getData());
-              }
-            }
-            outputWriterManager.returnRW(outputWriter);
+          #pragma omp parallel for schedule(static, chunkSize)
+          for (uint64_t bucketIdx = 0; bucketIdx < bucketThisBatch; ++bucketIdx) {
+            size_t bucketGlobalIdx = batchIdx * bucketPerBatch + bucketIdx;
+            auto extBeginIt = begin + (bucketGlobalIdx / numInterval + (bucketGlobalIdx % numInterval) * fetchInterval) * Z;
+            auto intBeginIt = batch + bucketIdx * Z;
+            // {
+            //   std::lock_guard<std::mutex> lock(m);
+            //   if (extIts.find(extBeginIt.get_m_ptr()) != extIts.end()) {
+            //     printf("extBeginIt = %p\n", extBeginIt.get_m_ptr());
+            //     abort();
+            //   }
+            //   extIts.insert(extBeginIt.get_m_ptr());
+            // }
+            CopyIn(extBeginIt, extBeginIt + Z, intBeginIt, ioLayer - 1);
           }
-          
         }
-        if (task == KWAYBUTTERFLYOSORT) {
-          // sort the batch and write to first layer of merge sort
-          const auto cmpVal = [](const auto& a, const auto& b) {
-            return a.v < b.v;
+        KWayButterflySortBasicNonRecursive(batch, batch + bucketThisBatch * Z, ioLayer,
+                              KWayParams.ways[ioLayer].size() - 1);
+        if (isLastLayer) {
+          // last layer, combine with bitonic sort and output
+          const auto cmpTag = [](const auto& a, const auto& b) {
+            return a.tag < b.tag;
           };
-          auto realEnd =
-              partitionDummy(batch, batch + batchSize);
-          // partition dummies to the end
-          Assert(realEnd <= batch + numElementFit);
-          std::sort(batch, realEnd, cmpVal);
-          auto mergeSortReaderBeginIt = mergeSortFirstLayerWriter.it;
-          for (auto it = batch; it != realEnd; ++it) {
-            mergeSortFirstLayerWriter.write(it->getData());
+          int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
+          #pragma omp parallel for schedule(static, chunkSize)
+          for (size_t i = 0; i < bucketThisBatch; ++i) {
+            auto it = batch + i * Z;
+            Assert(it + Z <= batch + numElementFit);
+            BitonicSort(it, it + Z, cmpTag);
+            // for shuffling, output directly
+            
+            if constexpr (task == KWAYBUTTERFLYOSHUFFLE) {
+              auto* outputWriter = outputWriterManager.getRW();
+              if (!outputWriter) {
+                printf("outputWriter is null\n");
+                abort();
+              }
+              for (auto fromIt = it; fromIt != it + Z; ++fromIt) {
+                if (!fromIt->isDummy()) {
+                  if (outputWriter->eof()) {
+                    outputWriterManager.returnRW(outputWriter);
+                    outputWriter = outputWriterManager.getRW();
+                    if (!outputWriter) {
+                      printf("outputWriter is null\n");
+                      abort();
+                    }
+                  }
+                  outputWriter->write(fromIt->getData());
+                }
+              }
+              outputWriterManager.returnRW(outputWriter);
+            }
+            
           }
+          if (task == KWAYBUTTERFLYOSORT) {
+            // sort the batch and write to first layer of merge sort
+            const auto cmpVal = [](const auto& a, const auto& b) {
+              return a.v < b.v;
+            };
+            auto realEnd =
+                partitionDummy(batch, batch + batchSize);
+            // partition dummies to the end
+            Assert(realEnd <= batch + numElementFit);
+            std::sort(batch, realEnd, cmpVal);
+            auto mergeSortReaderBeginIt = mergeSortFirstLayerWriter.it;
+            for (auto it = batch; it != realEnd; ++it) {
+              mergeSortFirstLayerWriter.write(it->getData());
+            }
 
-          mergeSortRanges.emplace_back(mergeSortReaderBeginIt,
-                                       mergeSortFirstLayerWriter.it);
-        }
-      } else {  // not last layer, write to intermediate ext vector
-        size_t batchWayRatio = bucketPerBatch / numInternalWay;
-        size_t chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
-        #pragma omp parallel for schedule(static, chunkSize)
-        for (uint64_t bucketIdx = 0; bucketIdx < bucketThisBatch; ++bucketIdx) {
-          auto extBeginIt = begin + (batchIdx * batchWayRatio + bucketIdx / numInternalWay + fetchInterval * (bucketIdx % numInternalWay)) * Z;
-          auto intBeginIt = batch + bucketIdx * Z;
-          CopyOut(intBeginIt, intBeginIt + Z, extBeginIt, ioLayer);
+            mergeSortRanges.emplace_back(mergeSortReaderBeginIt,
+                                        mergeSortFirstLayerWriter.it);
+          }
+        } else {  // not last layer, write to intermediate ext vector
+          size_t batchWayRatio = bucketPerBatch / numInternalWay;
+          size_t chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
+          #pragma omp parallel for schedule(static, chunkSize)
+          for (uint64_t bucketIdx = 0; bucketIdx < bucketThisBatch; ++bucketIdx) {
+            size_t bucketGlobalIdx = batchIdx * bucketPerBatch + bucketIdx;
+            auto extBeginIt = begin + (bucketGlobalIdx / numInterval + (bucketGlobalIdx % numInterval) * fetchInterval) * Z;
+            auto intBeginIt = batch + bucketIdx * Z;
+            CopyOut(intBeginIt, intBeginIt + Z, extBeginIt, ioLayer);
+          }
         }
       }
     }
-    if (isLastLayer) {
-      if constexpr (task == KWAYBUTTERFLYOSORT) {
-        mergeSortFirstLayerWriter.flush();
-      } else {
-        outputWriterManager.flush();
-      }
+    if constexpr (task == KWAYBUTTERFLYOSORT) {
+      mergeSortFirstLayerWriter.flush();
+    } else {
+      outputWriterManager.flush();
     }
   }
 
