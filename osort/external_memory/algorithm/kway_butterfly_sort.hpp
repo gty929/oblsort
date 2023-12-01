@@ -390,7 +390,7 @@ class ButterflySorter {
               return a.v < b.v;
             };
             auto realEnd =
-                partitionDummy(batch, batch + batchSize);
+                partitionDummy(batch, batch + bucketThisBatch * Z);
             // partition dummies to the end
             Assert(realEnd <= batch + numElementFit);
             std::sort(batch, realEnd, cmpVal);
@@ -480,8 +480,10 @@ void KWayButterflySort(Iterator begin, Iterator end, uint32_t inAuth,
                                                        heapSize);
   sorter.sort();
   const auto& mergeRanges = sorter.getMergeSortBatchRanges();
+
   ExtMergeSort(begin, end, mergeRanges, inAuth + 1,
                heapSize / (sizeof(T) * Vector<T>::item_per_page * 2));
+
 }
 
 template <typename Vec>

@@ -30,8 +30,8 @@ public:
 
 template <typename BaseRW, class Iterator>
 class RWManager {
-    BaseRW* baseRWs;
-    int parCount;
+    BaseRW* baseRWs = NULL;
+    int parCount = 0;
     ThreadSafeQueue<BaseRW*> rwQueue;
     std::atomic_int availableRWCount;
     using TRef = std::iterator_traits<Iterator>::reference;
@@ -89,6 +89,8 @@ public:
     }
 
     ~RWManager() {
-        delete[] baseRWs;
+        if (baseRWs) {
+            delete[] baseRWs;
+        }
     }
 };
