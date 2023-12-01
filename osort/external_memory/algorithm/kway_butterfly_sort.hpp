@@ -220,7 +220,6 @@ class ButterflySorter {
     for (uint64_t layer = 0, stride = 1; layer <= innerLayer; ++layer) {
       uint64_t way = KWayParams.ways[ioLayer][layer];
       uint64_t wayBucket = numBucket / way;
-
       #pragma omp parallel for schedule(static)
       for (uint64_t i = 0; i < wayBucket; ++i) {
         // merge read input to obtain better locality
@@ -290,6 +289,10 @@ class ButterflySorter {
   template <class Iterator>
   void KWayButterflySort(Iterator begin, Iterator end, size_t maxIoLayer) {
     for (size_t ioLayer = 0; ioLayer <= maxIoLayer; ++ioLayer) {
+      #ifdef ENCLAVE_MODE
+      uint64_t currTime;
+      ocall_measure_time(&currTime);
+      #endif
       bool isLastLayer = ioLayer == maxIoLayer;
       size_t numInternalWay = getVecProduct(KWayParams.ways[ioLayer]);
       size_t fetchInterval = 1;
@@ -307,7 +310,7 @@ class ButterflySorter {
       //   }
       // }
       if (size / Z % numInternalWay != 0) {
-        printf("size = %d, Z = %d, numInternalWay = %d\n", size, Z, numInternalWay);
+        printf("size = %ld, Z = %ld, numInternalWay = %ld\n", size, Z, numInternalWay);
         abort();
       }
       size_t bucketPerBatch = std::min(size / Z, numBucketFit / numInternalWay * numInternalWay);
@@ -325,9 +328,9 @@ class ButterflySorter {
         }
         if (ioLayer) {  // fetch from intermediate ext vector
           int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
-          size_t batchWayRatio = bucketPerBatch / numInternalWay;
+          // size_t batchWayRatio = bucketPerBatch / numInternalWay;
           
-          #pragma omp parallel for schedule(static, chunkSize)
+          #pragma omp parallel for schedule(static)
           for (uint64_t bucketIdx = 0; bucketIdx < bucketThisBatch; ++bucketIdx) {
             size_t bucketGlobalIdx = batchIdx * bucketPerBatch + bucketIdx;
             auto extBeginIt = begin + (bucketGlobalIdx / numInterval + (bucketGlobalIdx % numInterval) * fetchInterval) * Z;
@@ -350,8 +353,8 @@ class ButterflySorter {
           const auto cmpTag = [](const auto& a, const auto& b) {
             return a.tag < b.tag;
           };
-          int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
-          #pragma omp parallel for schedule(static, chunkSize)
+          // int chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
+          #pragma omp parallel for schedule(static)
           for (size_t i = 0; i < bucketThisBatch; ++i) {
             auto it = batch + i * Z;
             Assert(it + Z <= batch + numElementFit);
@@ -401,8 +404,8 @@ class ButterflySorter {
           }
         } else {  // not last layer, write to intermediate ext vector
           size_t batchWayRatio = bucketPerBatch / numInternalWay;
-          size_t chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
-          #pragma omp parallel for schedule(static, chunkSize)
+          // size_t chunkSize = std::max(1, (int)bucketThisBatch / thread_count);
+          #pragma omp parallel for schedule(static)
           for (uint64_t bucketIdx = 0; bucketIdx < bucketThisBatch; ++bucketIdx) {
             size_t bucketGlobalIdx = batchIdx * bucketPerBatch + bucketIdx;
             auto extBeginIt = begin + (bucketGlobalIdx / numInterval + (bucketGlobalIdx % numInterval) * fetchInterval) * Z;
@@ -411,6 +414,13 @@ class ButterflySorter {
           }
         }
       }
+      #ifdef ENCLAVE_MODE
+      uint64_t currTime2;
+      ocall_measure_time(&currTime2);
+      uint64_t timediff = currTime2 - currTime;
+      printf("Layer %ld: %d.%d\n", ioLayer, timediff / 1'000'000'000,
+           timediff % 1'000'000'000);
+      #endif
     }
     if constexpr (task == KWAYBUTTERFLYOSORT) {
       mergeSortFirstLayerWriter.flush();

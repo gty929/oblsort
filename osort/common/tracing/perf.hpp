@@ -2,7 +2,7 @@
 #include <iostream>
 
 #ifndef ENCLAVE_MODE
-#define ENABLE_PERF_COUNTERS 1
+// #define ENABLE_PERF_COUNTERS 1
 #endif
 
 struct PerfCounters {

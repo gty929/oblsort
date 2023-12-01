@@ -273,7 +273,7 @@ template <typename int_type>
     std::vector<int_type> factorsCopy = factors;
     factorsCopy.erase(factorsCopy.begin() + i);
     std::vector<std::vector<int_type>> tempResult;
-    int_type tempProd = optGroups(tempResult, factorsCopy, groupCount, currProduct * factors[i], i + 1);
+    int_type tempProd = optGroups(tempResult, factorsCopy, groupCount, currProduct * factors[i], i);
     if (tempProd < minProduct) {
       minProduct = tempProd;
       result = tempResult;
@@ -392,6 +392,9 @@ class ButterflyWaySolver {
     // }
     // printf("\n");
     optGroups(output, optimalWays, numLayer);
+    std::sort(output.begin(), output.end(), [](const auto& a, const auto& b) {
+      return getVecProduct(a) > getVecProduct(b);
+    });
     // output.emplace_back(begin, it);
 
     // now minmize the maximum number of ways in each layer
@@ -432,10 +435,10 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
   const double bitonicCostFactor = 7.2e-6;
 
   const std::vector<std::vector<double>> costs = {
-      {6.889e-02, 1.698e-07, 1.905e-07}, {5.630e-02, 9.017e-06, 1.781e-07},
-      {6.714e-02, 1.122e-05, 1.691e-07}, {7.285e-02, 1.247e-05, 1.734e-07},
-      {5.692e-02, 1.221e-05, 1.825e-07}, {5.723e-02, 1.303e-05, 1.878e-07},
-      {5.684e-02, 1.345e-05, 1.892e-07}};
+      {3.889e-02, 1.698e-07, 1.905e-07}, {2.630e-02, 9.017e-06, 1.781e-07},
+      {3.714e-02, 1.122e-05, 1.691e-07}, {3.285e-02, 1.247e-05, 1.734e-07},
+      {2.692e-02, 1.221e-05, 1.825e-07}, {2.723e-02, 1.303e-05, 1.878e-07},
+      {2.684e-02, 1.345e-05, 1.892e-07}};
 
   std::vector<double> costZ(7);
 
@@ -444,6 +447,7 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
 #else
   static const double ioCostPerElement = 0.00061467;
 #endif
+  int bestThreadCount = 1;
   for (int i = 0; i < 7; ++i) {
     size_t logZ = 8 + i;
     size_t Z = 1UL << logZ;
@@ -479,11 +483,13 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
       }
     }
     cost += bitonicCostFactor * Z * logZ * logZ * actualBucketCount;
+    cost /= pow(thread_count, 0.7);
     if (cost < minCost) {
       minCost = cost;
       optimalParams = params;
       optimalParams.Z = Z;
       optimalParams.totalBucket = actualBucketCount;
+      bestThreadCount = thread_count;
     }
   }
   printf("\n");
@@ -493,10 +499,10 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
       }
       printf("\n");
     }
-  printf("thread_count = %d\n", thread_count);
+  printf("thread_count = %d\n", bestThreadCount);
   printf("Z = %lu\n", optimalParams.Z);
   omp_set_nested(0);
-  omp_set_num_threads(thread_count);
+  omp_set_num_threads(bestThreadCount);
   // printf("set done\n");
   return optimalParams;
 }

@@ -100,7 +100,7 @@ TEST(TestSort, TestKWayButterflySortPerf) {
 
 TEST(TestSort, TestKWayButterflyOShufflePerf) {
   // RELEASE_ONLY_TEST();
-  for (double N = 1; N < 10000000; N *= 5) {
+  for (double N = 1; N < 100000000; N *= 5) {
     test_sort((size_t)N, KWayButterflyOShuffle, true);
   }
 }
@@ -273,33 +273,3 @@ TEST(TestSort, BNSort) {
   PERFCTR_LOG();
 }
 
-TEST(TestSort, TestMergeSplitPerfForDifferentBlockSizes) {
-  RELEASE_ONLY_TEST();
-
-  size_t Zbegin = 200, Zend = 2000;
-  uint64_t runtime[4][Zend - Zbegin];
-  uint64_t bitMask = 4UL;
-  for (uint64_t Z = Zbegin; Z < Zend; Z = Z * 3 / 2) {
-    TaggedT<uint64_t> defaultVal;
-    defaultVal.setDummy();
-
-    const uint64_t N = 2 * Z;
-    vector<TaggedT<uint64_t>> v(N, defaultVal);
-    for (int method = 0; method != 4; ++method) {
-      PERFCTR_RESET();
-      MergeSplitInPlace(v.begin(), v.end(), bitMask, (PartitionMethod)method);
-      runtime[method][Z - Zbegin] = g_PerfCounters.swapCount;
-    }
-  }
-  ofstream ofs;
-  ofs.open("mergesplitperf.out");
-  ofs << "\tEvenOdd\tOrCompact\tGoodrich\tBitonic\t" << std::endl;
-  for (uint64_t Z = Zbegin; Z < Zend; ++Z) {
-    ofs << Z << '\t';
-    for (int method = 0; method != 4; ++method) {
-      ofs << runtime[method][Z - Zbegin] << "\t";
-    }
-    ofs << std::endl;
-  }
-  ofs.close();
-}

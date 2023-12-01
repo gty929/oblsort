@@ -3,11 +3,13 @@
 #include "common/dummy.hpp"
 #include "common/encrypted.hpp"
 #include "common/mov_intrinsics.hpp"
+#ifdef ENCLAVE_MODE
 #include "sgx_eid.h"
 #include "sgx_tcrypto.h"
 #include "sgx_trts.h"
 #include "sgx_thread.h"
 #include "sgx_tseal.h"
+#endif
 #include <omp.h>
 /// This file defines some macros and data structures for sorting and shuffling
 /// algorithms.
