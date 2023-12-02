@@ -1,0 +1,5 @@
+if(EXISTS "/home/klxia/psort/oblsort/tests/test_basic_perf[1]_tests.cmake")
+  include("/home/klxia/psort/oblsort/tests/test_basic_perf[1]_tests.cmake")
+else()
+  add_test(test_basic_perf_NOT_BUILT test_basic_perf_NOT_BUILT)
+endif()

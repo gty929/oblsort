@@ -31,7 +31,7 @@ void printProfile(uint64_t N, ostream& ofs, auto& diff) {
 
 template <typename Vec, typename F>
 void _test_sort(size_t size, string funcname, F&& sortFunc,
-                bool isPermutation = false) {
+                bool isPermutation = false, bool skipCheck = false) {
   delete EM::Backend::g_DefaultBackend;
   EM::Backend::g_DefaultBackend =
       new EM::Backend::MemServerBackend((1ULL << 10) * (size + 1024));
@@ -64,6 +64,9 @@ void _test_sort(size_t size, string funcname, F&& sortFunc,
   auto end = std::chrono::system_clock::now();
   std::chrono::duration<double> diff = end - start;
   printProfile(N, cout, diff);
+  if (skipCheck) {
+    return;
+  }
   if constexpr (std::is_same<Vec, Vector<SortElement, PAGE_SIZE>>::value) {
     CopyIn(vExt.begin(), vExt.end(), v.begin(), 1);
   } else {
@@ -103,6 +106,11 @@ TEST(TestSort, TestKWayButterflyOShufflePerf) {
   for (double N = 1; N < 100000000; N *= 5) {
     test_sort((size_t)N, KWayButterflyOShuffle, true);
   }
+}
+
+TEST(TestSort, TestKWayButterflyOShuffleParallelPerf) {
+  // RELEASE_ONLY_TEST();
+  test_sort((size_t)100000000, KWayButterflyOShuffle, true, true);
 }
 
 TEST(TestSort, TestKWayDistriSortPerf) {
