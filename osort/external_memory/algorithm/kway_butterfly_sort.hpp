@@ -239,24 +239,22 @@ class ButterflySorter {
               break;
             }
             auto it = begin + (i * way + j) * Z;
-            for (uint64_t offset = 0; offset < Z; ++offset, ++it) {
-              if (offset < numRealPerBucket) {
-                if (inputReader->eof()) {
-                  inputReaderManager.returnRW(inputReader);
-                  inputReader = inputReaderManager.getRW();
-                  if (!inputReader) {
-                    overFlag = true;
-                    // all readers have been consumed, pad dummies to the end
-                    for (; offset < Z; ++offset, ++it) {
-                      it->setDummy();
-                    }
-                    break;
-                  }
+            uint64_t offset;
+            for (offset = 0; offset < numRealPerBucket; ++offset, ++it) {
+              if (inputReader->eof()) {
+                inputReaderManager.returnRW(inputReader);
+                inputReader = inputReaderManager.getRW();
+                if (!inputReader) {
+                  overFlag = true;
+                  // all readers have been consumed, pad dummies to the end
+                  break;
                 }
-                it->setData(inputReader->read(), *inputReader->prng);
-              } else {
-                it->setDummy();
               }
+              it->setData(inputReader->read(), *inputReader->prng);
+            }
+            
+            for (; offset < Z; ++offset, ++it) {
+              it->setDummy();
             }
           }
           if (inputReader) {
