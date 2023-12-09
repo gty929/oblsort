@@ -7,6 +7,7 @@ enclave {
     public void ecall_mergesplit_perf(void);
     public void ecall_mergesplit_compare(void);
     public void ecall_bitonic_perf(void);
+    public void ecall_ideal_speedup_test(void);
   };
 
   untrusted {

@@ -4,7 +4,7 @@ source /startsgxenv.sh
 SGX_MODE=HW # HW or SIM
 
 # Algorithms:
-ALGOs=(KWAYBUTTERFLYOSHUFFLE)
+ALGOs=(OTHER)
 MIN_ELEMENT_SIZE=128 # element size in bytes
 MAX_ELEMENT_SIZE=128
 MIN_SIZE=100000000    # input size in number of elements
@@ -15,6 +15,7 @@ IO_ROUNDs=(1) # number of rounds encryption/decryption is performed, used to get
 CORE_ID=5 # the cpu core id to run the program
 DISK_IO=0 # 0: no disk IO, 1: disk IO
 THREAD_COUNTS=(2 3 5 9 17 33)
+# THREAD_COUNTS=(33)
 
 for IO_ROUND in ${IO_ROUNDs[@]}; do
 if [ $IO_ROUND = 0 ]

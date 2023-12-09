@@ -267,12 +267,15 @@ class ButterflySorter {
         for (uint64_t j = 0; j < way; ++j) {
           KWayIts[j] = begin + ((j + groupIdx * way) * stride + groupOffset) * Z;
         }
-        WrappedT* temp = new WrappedT[way * Z];
-        uint8_t* marks = new uint8_t[8 * Z];
+        size_t tempBucketsSize = way * Z * sizeof(WrappedT);
+        WrappedT* temp = (WrappedT*)malloc(tempBucketsSize + way * Z); //new WrappedT[way * Z];
+        uint8_t* marks = (uint8_t*)temp + tempBucketsSize;  //new uint8_t[8 * Z];
         MergeSplitKWay(KWayIts, way, Z, temp, marks);
         
-        delete[] temp;
-        delete[] marks;
+        free(temp);
+
+        // delete[] temp;
+        // delete[] marks;
       }
 
       stride *= way;

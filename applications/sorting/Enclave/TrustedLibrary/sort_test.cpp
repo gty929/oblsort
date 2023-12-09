@@ -108,6 +108,28 @@ void ecall_sort_perf() {
   }
 }
 
+void ecall_ideal_speedup_test() {
+  uint64_t currTime;
+  ocall_measure_time(&currTime);
+  #pragma omp parallel for
+  for (int i = 0; i < 128; ++i) {
+    uint64_t* buf = new uint64_t[65546];
+    for (int j = 0; j < 65536; ++j) {
+      buf[j] = j;
+    }
+    for (uint64_t t = 0; t < 1000; ++t) {
+      std::sort(buf, buf + 65536, std::greater<>());
+      std::sort(buf, buf + 65536, std::less<>());
+    }
+    delete[] buf;
+  }
+  uint64_t currTime2;
+  ocall_measure_time(&currTime2);
+  uint64_t timediff = currTime2 - currTime;
+  printf("%d.%d\n", timediff / 1'000'000'000,
+           timediff % 1'000'000'000);
+}
+
 void ecall_pageswap_with_crypt_perf() {
   printf("ecall_pageswap_with_crypt_perf called\n");
   uint64_t size = (1UL << 24);

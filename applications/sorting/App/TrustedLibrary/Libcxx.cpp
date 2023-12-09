@@ -14,6 +14,7 @@ void ActualMain(void) {
   sgx_status_t ret = SGX_ERROR_UNEXPECTED;
 
   ret = ecall_sort_perf(global_eid);
+  // ret = ecall_ideal_speedup_test(global_eid);
   // ret = ecall_test_sanity(global_eid);
   // ret = ecall_pageswap_perf(global_eid);
   // ret = ecall_pageswap_with_crypt_perf(global_eid);
