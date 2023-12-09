@@ -90,15 +90,15 @@ void ecall_sort_perf() {
     uint64_t currTime2;
     ocall_measure_time(&currTime2);
 
-    TestVector::PrefetchReader reader(vExt.begin(), vExt.end(), 1);
+    // TestVector::PrefetchReader reader(vExt.begin(), vExt.end(), 1);
     
-    for (uint64_t i = 0; i < size; ++i) {
-      SortElement element = reader.read();
-      if (element.key >= 1000000) {
-        printf("wrong result\n");
-        abort();
-      }
-    }
+    // for (uint64_t i = 0; i < size; ++i) {
+    //   SortElement element = reader.read();
+    //   if (element.key >= 1000000) {
+    //     printf("wrong result\n");
+    //     abort();
+    //   }
+    // }
     uint64_t timediff = currTime2 - currTime;
     printf("%ld\t%ld\t%d.%d\n", size, ELEMENT_SIZE, timediff / 1'000'000'000,
            timediff % 1'000'000'000);

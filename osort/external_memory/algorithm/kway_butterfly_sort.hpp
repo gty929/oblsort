@@ -290,8 +290,8 @@ class ButterflySorter {
   void KWayButterflySort(Iterator begin, Iterator end, size_t maxIoLayer) {
     for (size_t ioLayer = 0; ioLayer <= maxIoLayer; ++ioLayer) {
       #ifdef ENCLAVE_MODE
-      uint64_t currTime;
-      ocall_measure_time(&currTime);
+      // uint64_t currTime;
+      // ocall_measure_time(&currTime);
       #endif
       bool isLastLayer = ioLayer == maxIoLayer;
       size_t numInternalWay = getVecProduct(KWayParams.ways[ioLayer]);
@@ -415,11 +415,11 @@ class ButterflySorter {
         }
       }
       #ifdef ENCLAVE_MODE
-      uint64_t currTime2;
-      ocall_measure_time(&currTime2);
-      uint64_t timediff = currTime2 - currTime;
-      printf("Layer %ld: %d.%d\n", ioLayer, timediff / 1'000'000'000,
-           timediff % 1'000'000'000);
+      // uint64_t currTime2;
+      // ocall_measure_time(&currTime2);
+      // uint64_t timediff = currTime2 - currTime;
+      // printf("Layer %ld: %d.%d\n", ioLayer, timediff / 1'000'000'000,
+      //      timediff % 1'000'000'000);
       #endif
     }
     if constexpr (task == KWAYBUTTERFLYOSORT) {

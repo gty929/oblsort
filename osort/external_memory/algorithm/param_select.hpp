@@ -492,15 +492,15 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
       bestThreadCount = thread_count;
     }
   }
-  printf("\n");
-  for (auto& vec : optimalParams.ways) {
-      for (auto way : vec) {
-        printf("%lu * ", way);
-      }
-      printf("\n");
-    }
-  printf("thread_count = %d\n", bestThreadCount);
-  printf("Z = %lu\n", optimalParams.Z);
+  // printf("\n");
+  // for (auto& vec : optimalParams.ways) {
+  //     for (auto way : vec) {
+  //       printf("%lu * ", way);
+  //     }
+  //     printf("\n");
+  //   }
+  // printf("thread_count = %d\n", bestThreadCount);
+  // printf("Z = %lu\n", optimalParams.Z);
   omp_set_nested(0);
   omp_set_num_threads(bestThreadCount);
   // printf("set done\n");
