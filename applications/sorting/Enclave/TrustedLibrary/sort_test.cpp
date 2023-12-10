@@ -3,6 +3,7 @@
 #include "external_memory/algorithm/ca_bucket_sort.hpp"
 #include "external_memory/algorithm/kway_butterfly_sort.hpp"
 #include "external_memory/algorithm/kway_distri_sort.hpp"
+
 #ifndef ALGO
 #define ALGO KWAYBUTTERFLYOSORT
 #endif
@@ -50,6 +51,11 @@ void ecall_sort_perf() {
     if (EM::Backend::g_DefaultBackend) {
       delete EM::Backend::g_DefaultBackend;
     }
+    void* heapHolder = malloc(DEFAULT_HEAP_SIZE);
+    if (!heapHolder) {
+      printf("malloc failed\n");
+      abort();
+    }
     size_t BackendSize =
         ((ALGO == CABUCKETSORT || ALGO == CABUCKETSHUFFLE) ? 16 : 4) *
         sizeof(TaggedT<SortElement>) * size;
@@ -63,6 +69,7 @@ void ecall_sort_perf() {
       writer.write(element);
     }
     writer.flush();
+    free(heapHolder);
     uint64_t currTime;
     ocall_measure_time(&currTime);
     if constexpr (ALGO == KWAYBUTTERFLYOSORT) {

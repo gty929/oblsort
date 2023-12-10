@@ -3,8 +3,8 @@
   <ProdID>0</ProdID>
   <ISVSVN>0</ISVSVN>
   <StackMaxSize>0x400000</StackMaxSize>
-  <HeapInitSize>0x7A00000</HeapInitSize>
-  <HeapMaxSize>0x7A00000</HeapMaxSize>
+  <HeapInitSize>0x53ec6000</HeapInitSize>
+  <HeapMaxSize>0x53ec6000</HeapMaxSize>
   <TCSNum>33</TCSNum>
   <TCSPolicy>1</TCSPolicy>
   <DisableDebug>0</DisableDebug>

@@ -4,8 +4,6 @@
 #include "param_select.hpp"
 #include "sort_building_blocks.hpp"
 #include "external_memory/par_io.hpp"
-// #include <atomic>
-// #include <unordered_set>
 
 /// This file implements the flex-way butterfly osort and oshuffle algorithms.
 
@@ -64,7 +62,7 @@ class ButterflySorter {
   KWayButterflyParams KWayParams =
       {};  // parameters for flex-way butterfly o-sort
 
-  Vector<T>
+  std::conditional_t<task == KWAYBUTTERFLYOSORT, Vector<T>, uint64_t>
       mergeSortFirstLayer;  // the first layer of external-memory merge sort
   std::vector<
       std::pair<typename Vector<T>::Iterator, typename Vector<T>::Iterator>>
@@ -72,11 +70,14 @@ class ButterflySorter {
                         // in the first layer of external-memory merge sort
 
   // writer for the first layer of external-memory merge sort
-  typename Vector<T>::Writer mergeSortFirstLayerWriter;
+  std::conditional_t<task == KWAYBUTTERFLYOSORT, typename Vector<T>::Writer, uint64_t> mergeSortFirstLayerWriter;
 
   RWManager<typename IOVector::PrefetchReader, typename IOVector::Iterator> inputReaderManager;  // input reader
   RWManager<typename IOVector::Writer, typename IOVector::Iterator> outputWriterManager;         // output writer
+  ThreadSafeStack<uint64_t> freeTempIndices;
   WrappedT* batch;                                // batch for sorting
+  uint8_t* tempBegin;
+  uint64_t tempSize;
  public:
   /// @brief Construct a new Butterfly Sorter object
   /// @param inputBeginIt the begin iterator of the input array
@@ -89,17 +90,25 @@ class ButterflySorter {
             task == KWAYBUTTERFLYOSORT ? inputEndIt - inputBeginIt : 0),
         numElementFit(_heapSize / sizeof(WrappedT)) {
     size_t size = inputEndIt - inputBeginIt;
-    batch = new WrappedT[numElementFit]; // declare ahead to avoid fragmentation
+    batch = (WrappedT*)malloc(_heapSize); // declare ahead to avoid fragmentation
+    if (!batch) {
+      printf("batch allocation failed\n");
+      abort();
+    }
     KWayParams = bestKWayButterflyParams(size, numElementFit, sizeof(T));
     inputReaderManager.init(inputBeginIt, inputEndIt, inAuth, thread_count);
     Z = KWayParams.Z;
     Assert(numElementFit > 8 * Z * thread_count);
+    uint64_t tempElementFit = divRoundUp(Z * 8 * (sizeof(WrappedT) + 2), sizeof(WrappedT));
     numElementFit -=
-        divRoundUp(Z * 8 * (sizeof(WrappedT) + 2), sizeof(WrappedT)) * thread_count;
-    // deduct the temp memory for merge split
-    delete[] batch;
-    batch = new WrappedT[numElementFit];
-    // reserve space for 8 buckets of elements and marks
+        tempElementFit * thread_count;
+
+    freeTempIndices.init(thread_count);
+    for (uint64_t i = 0; i < thread_count; ++i) {
+      freeTempIndices.Push(i);
+    }
+    tempBegin = (uint8_t*)batch + numElementFit * sizeof(WrappedT);
+    tempSize = tempElementFit * sizeof(WrappedT);
     numBucketFit = numElementFit / Z;
     numTotalBucket = KWayParams.totalBucket;
     numRealPerBucket = 1 + (size - 1) / numTotalBucket;
@@ -115,12 +124,12 @@ class ButterflySorter {
 
   ~ButterflySorter() {
     if (batch != NULL) {
-      delete[] batch;
+      free(batch);
     }
   }
 
   const auto& getMergeSortBatchRanges() { return mergeSortRanges; }
-
+/*
   /// @brief Base case of flex-way butterfly o-sort when input fits in memory
   /// @tparam Iterator should support random access
   /// @param begin begin iterator of the input array
@@ -204,6 +213,7 @@ class ButterflySorter {
         delete[] marks;
       }
   }
+  */
 
   /// @brief Base case of flex-way butterfly o-sort when input fits in memory
   /// @tparam Iterator should support random access
@@ -222,6 +232,11 @@ class ButterflySorter {
       uint64_t wayBucket = numBucket / way;
       #pragma omp parallel for schedule(static)
       for (uint64_t i = 0; i < wayBucket; ++i) {
+        uint64_t tempIdx;
+        if (!freeTempIndices.Pop(tempIdx)) {
+          printf("freeTempIndices is empty\n");
+          abort();
+        } // get a temp buffer
         // merge read input to obtain better locality
         if (layer == 0 && ioLayer == 0) {
           typename IOVector::PrefetchReader* inputReader = inputReaderManager.getRW();
@@ -268,11 +283,11 @@ class ButterflySorter {
           KWayIts[j] = begin + ((j + groupIdx * way) * stride + groupOffset) * Z;
         }
         size_t tempBucketsSize = way * Z * sizeof(WrappedT);
-        WrappedT* temp = (WrappedT*)malloc(tempBucketsSize + way * Z); //new WrappedT[way * Z];
-        uint8_t* marks = (uint8_t*)temp + tempBucketsSize;  //new uint8_t[8 * Z];
-        MergeSplitKWay(KWayIts, way, Z, temp, marks);
+        uint8_t* temp = tempBegin + tempIdx * tempSize; //new WrappedT[way * Z];
+        uint8_t* marks = temp + tempBucketsSize;  //new uint8_t[8 * Z];
+        MergeSplitKWay(KWayIts, way, Z, (WrappedT*)temp, marks);
         
-        free(temp);
+        freeTempIndices.Push(tempIdx);
 
         // delete[] temp;
         // delete[] marks;
@@ -385,7 +400,7 @@ class ButterflySorter {
             }
             
           }
-          if (task == KWAYBUTTERFLYOSORT) {
+          if constexpr (task == KWAYBUTTERFLYOSORT) {
             // sort the batch and write to first layer of merge sort
             const auto cmpVal = [](const auto& a, const auto& b) {
               return a.v < b.v;
@@ -438,7 +453,7 @@ class ButterflySorter {
     EM::DynamicPageVector::Vector<TaggedT<T>> v(getOutputSize(),
                                                 getBucketSize());
     KWayButterflySort(v.begin(), v.end());
-    delete[] batch;
+    free(batch);
     batch = NULL;
   }
 

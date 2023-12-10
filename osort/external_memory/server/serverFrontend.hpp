@@ -35,7 +35,7 @@ struct NonCachedServerFrontendInstance {
 
   T defaultVal;
 
-  std::vector<bool> modified;
+  std::conditional_t<LATE_INIT, std::vector<bool>, bool> modified;
 
   AllocatorSlot slot;
 

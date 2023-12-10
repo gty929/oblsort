@@ -5,19 +5,19 @@
 #include <queue>
 #include <thread>
 #include <atomic>
-
+#include "common/queue.hpp"
 template <typename T>
 class ThreadSafeQueue {
     std::queue<T> queue;
     std::mutex mutex;
 
 public:
-    void push(T t) {
+    void Push(const T& t) {
         std::lock_guard<std::mutex> lock(mutex);
         queue.push(t);
     }
 
-    bool pop(T& t) {
+    bool Pop(T& t) {
         std::lock_guard<std::mutex> lock(mutex);
         if (queue.empty()) {
             return false;
@@ -28,11 +28,38 @@ public:
     }
 };
 
+template <typename T>
+class ThreadSafeStack {
+    std::vector<T> stack;
+    std::mutex mutex;
+
+public:
+    void init(uint64_t size) {
+        stack.reserve(size);
+    }
+
+    void Push(const T& t) {
+        std::lock_guard<std::mutex> lock(mutex);
+        stack.push_back(t);
+    }
+
+    bool Pop(T& t) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (stack.empty()) {
+            return false;
+        }
+        t = stack.back();
+        stack.pop_back();
+        return true;
+    }
+};
+
 template <typename BaseRW, class Iterator>
 class RWManager {
     BaseRW* baseRWs = NULL;
     int parCount = 0;
     ThreadSafeQueue<BaseRW*> rwQueue;
+    // lockfree::mpmc::Queue<BaseRW*, 64> rwQueue;
     std::atomic_int availableRWCount;
     using TRef = std::iterator_traits<Iterator>::reference;
 public:
@@ -42,7 +69,6 @@ public:
 
     template<const bool align = true>
     void init(Iterator begin, Iterator end, uint32_t auth, int parCount) {
-        
         size_t size_per_rw = divRoundUp(end - begin, parCount);
         if constexpr (align) {
             size_t size_per_page = begin.getVector().item_per_page;
@@ -58,13 +84,13 @@ public:
             Iterator baseRWBegin = begin + size_per_rw * i;
             Iterator baseRWEnd = std::min(begin + size_per_rw * (i + 1), end);
             baseRWs[i].init(baseRWBegin, baseRWEnd, auth);
-            rwQueue.push(baseRWs + i);
+            rwQueue.Push(baseRWs + i);
         }
     }
 
     BaseRW* getRW() {
         BaseRW* ret;
-        while (!rwQueue.pop(ret)) {
+        while (!rwQueue.Pop(ret)) {
             if (availableRWCount == 0) {
                 return nullptr; // all rws have been consumed
             }
@@ -79,7 +105,7 @@ public:
             availableRWCount--;
             return; // this rw has been consumed
         }
-        rwQueue.push(rw); }
+        rwQueue.Push(rw); }
 
     // flush all pages
     void flush() {

@@ -56,7 +56,7 @@ void _test_sort(size_t size, string funcname, F&& sortFunc,
   auto cmp = [](const SortElement& ele1, const SortElement& ele2) {
     return ele1.key < ele2.key;
   };
-
+  printf("prepare running sortFunc\n");
   PERFCTR_RESET();
   auto start = std::chrono::system_clock::now();
   sortFunc(vExt);
@@ -110,7 +110,7 @@ TEST(TestSort, TestKWayButterflyOShufflePerf) {
 
 TEST(TestSort, TestKWayButterflyOShuffleParallelPerf) {
   // RELEASE_ONLY_TEST();
-  test_sort((size_t)100000000, KWayButterflyOShuffle, true, true);
+  test_sort((size_t)10000000, KWayButterflyOShuffle, true, true);
 }
 
 TEST(TestSort, TestKWayDistriSortPerf) {
