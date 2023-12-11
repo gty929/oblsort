@@ -503,6 +503,7 @@ static KWayButterflyParams bestKWayButterflyParams(size_t N,
   // printf("Z = %lu\n", optimalParams.Z);
   omp_set_nested(0);
   omp_set_num_threads(bestThreadCount);
+  thread_count = bestThreadCount;
   // printf("set done\n");
   return optimalParams;
 }

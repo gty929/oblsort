@@ -7,15 +7,15 @@ SGX_MODE=HW # HW or SIM
 ALGOs=(KWAYBUTTERFLYOSHUFFLE)
 MIN_ELEMENT_SIZE=128 # element size in bytes
 MAX_ELEMENT_SIZE=128
-MIN_SIZE=10000000    # input size in number of elements
-MAX_SIZE=400000000
+MIN_SIZE=500000000    # input size in number of elements
+MAX_SIZE=500000001
 MIN_ENCLAVE_SIZE=1280 # enclave size in MB
 MAX_ENCLAVE_SIZE=1280
 IO_ROUNDs=(1) # number of rounds encryption/decryption is performed, used to get breakdown
 CORE_ID=5 # the cpu core id to run the program
 DISK_IO=0 # 0: no disk IO, 1: disk IO
-# THREAD_COUNTS=(2 3 5 9 17 33)
-THREAD_COUNTS=(33)
+THREAD_COUNTS=(2 3 5 9 17 33)
+# THREAD_COUNTS=(33)
 
 for IO_ROUND in ${IO_ROUNDs[@]}; do
 if [ $IO_ROUND = 0 ]
