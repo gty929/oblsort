@@ -129,91 +129,6 @@ class ButterflySorter {
   }
 
   const auto& getMergeSortBatchRanges() { return mergeSortRanges; }
-/*
-  /// @brief Base case of flex-way butterfly o-sort when input fits in memory
-  /// @tparam Iterator should support random access
-  /// @param begin begin iterator of the input array
-  /// @param end end iterator of the input array
-  /// @param ioLayer current layer of butterfly network by page swap passes
-  /// @param innerLayer current layer of butterfly network within the batch
-  template <class Iterator>
-  void KWayButterflySortBasic(Iterator begin, Iterator end, size_t ioLayer,
-                              size_t innerLayer) {
-    uint64_t numElement = end - begin;
-    uint64_t numBucket = numElement / Z;
-    uint64_t way = KWayParams.ways[ioLayer][innerLayer];
-    Assert(numElement % Z == 0);
-    Assert(numBucket % way == 0);
-    uint64_t waySize = numElement / way;
-    uint64_t wayBucket = numBucket / way;
-    if (innerLayer > 0) {
-
-      #pragma omp parallel for schedule(static)
-      for (uint64_t i = 0; i < way; ++i) {
-        KWayButterflySortBasic(begin + i * waySize, begin + (i + 1) * waySize,
-                              ioLayer, innerLayer - 1);
-      }
-    
-    } else {
-      Assert(numBucket == way);
-      if (ioLayer == 0) {
-        Assert(waySize == Z);
-        typename IOVector::PrefetchReader* inputReader = inputReaderManager.getRW();
-        bool overFlag = !inputReader;
-        // tag and pad input
-        for (uint64_t i = 0; i < way; ++i) {
-          if (overFlag) {
-            // set rest of the buckets to dummy
-            for (; i < way; ++i) {
-              auto it = begin + i * waySize;
-              for (uint64_t offset = 0; offset < Z; ++offset, ++it) {
-                it->setDummy();
-              }
-            }
-            break;
-          }
-          auto it = begin + i * waySize;
-          for (uint64_t offset = 0; offset < Z; ++offset, ++it) {
-            if (offset < numRealPerBucket) {
-              if (inputReader->eof()) {
-                inputReaderManager.returnRW(inputReader);
-                inputReader = inputReaderManager.getRW();
-                if (!inputReader) {
-                  overFlag = true;
-                  // all readers have been consumed, pad dummies to the end
-                  for (; offset < Z; ++offset, ++it) {
-                    it->setDummy();
-                  }
-                  break;
-                }
-              }
-              it->setData(inputReader->read(), *inputReader->prng);
-            } else {
-              it->setDummy();
-            }
-          }
-        }
-        if (inputReader) {
-          inputReaderManager.returnRW(inputReader);
-        }
-      }
-    }
-    int chunkSize = std::max(1, (int)wayBucket / thread_count);
-      #pragma omp parallel for schedule(static, chunkSize)
-      for (uint64_t j = 0; j < wayBucket; ++j) {
-        Iterator KWayIts[8];
-        for (uint64_t i = 0; i < way; ++i) {
-          KWayIts[i] = begin + (i * wayBucket + j) * Z;
-        }
-        WrappedT* temp = new WrappedT[way * Z];
-        uint8_t* marks = new uint8_t[8 * Z];
-        MergeSplitKWay(KWayIts, way, Z, temp, marks);
-        
-        delete[] temp;
-        delete[] marks;
-      }
-  }
-  */
 
   /// @brief Base case of flex-way butterfly o-sort when input fits in memory
   /// @tparam Iterator should support random access
@@ -409,7 +324,8 @@ class ButterflySorter {
                 partitionDummy(batch, batch + bucketThisBatch * Z);
             // partition dummies to the end
             Assert(realEnd <= batch + numElementFit);
-            std::sort(batch, realEnd, cmpVal);
+            // std::sort(batch, realEnd, cmpVal);
+            mergeSortParallel(batch, realEnd);
             auto mergeSortReaderBeginIt = mergeSortFirstLayerWriter.it;
             for (auto it = batch; it != realEnd; ++it) {
               mergeSortFirstLayerWriter.write(it->getData());
@@ -443,6 +359,37 @@ class ButterflySorter {
     } else {
       outputWriterManager.flush();
     }
+  }
+
+  template <typename Iterator>
+  void mergeSortParallelRecursive(Iterator begin, Iterator end) {
+    const auto cmpVal = [](const auto& a, const auto& b) {
+      return a.v < b.v;
+    };
+
+    if (end - begin > 1) {
+      if (end - begin >= 1024) {
+        auto mid = begin + (end - begin) / 2;
+        #pragma omp taskgroup 
+        {
+          #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<12))
+          mergeSortParallelRecursive(begin, mid);
+          #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<12))
+          mergeSortParallelRecursive(mid, end); 
+          #pragma omp taskyield
+        }  
+        std::inplace_merge(begin, mid, end, cmpVal); 
+      } else {
+        std::sort(begin, end, cmpVal);
+      }
+    }
+  }
+
+  template <typename Iterator>
+  void mergeSortParallel(Iterator begin, Iterator end) {
+    #pragma omp parallel
+    #pragma omp single
+    mergeSortParallelRecursive(begin, end);
   }
 
   void sort() {
