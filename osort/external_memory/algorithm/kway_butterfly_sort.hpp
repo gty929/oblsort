@@ -317,15 +317,20 @@ class ButterflySorter {
           }
           if constexpr (task == KWAYBUTTERFLYOSORT) {
             // sort the batch and write to first layer of merge sort
-            const auto cmpVal = [](const auto& a, const auto& b) {
-              return a.v < b.v;
+            // const auto cmpVal = [](const auto& a, const auto& b) {
+            //   return a.v < b.v;
+            // };
+            const auto isNotDummy = [](const auto& element) {
+                return !element.isDummy();
             };
-            auto realEnd =
-                partitionDummy(batch, batch + bucketThisBatch * Z);
+
+            auto realEnd = std::partition(batch, batch + bucketThisBatch * Z, isNotDummy);
+            // auto realEnd =
+            //     partitionDummy(batch, batch + bucketThisBatch * Z);
             // partition dummies to the end
             Assert(realEnd <= batch + numElementFit);
-            // std::sort(batch, realEnd, cmpVal);
             mergeSortParallel(batch, realEnd);
+            // std::sort(batch, realEnd, cmpVal);
             auto mergeSortReaderBeginIt = mergeSortFirstLayerWriter.it;
             for (auto it = batch; it != realEnd; ++it) {
               mergeSortFirstLayerWriter.write(it->getData());
@@ -363,7 +368,7 @@ class ButterflySorter {
 
   template <typename Iterator>
   void mergeSortParallelRecursive(Iterator begin, Iterator end) {
-    const auto cmpVal = [](const auto& a, const auto& b) {
+    auto cmpVal = [](const auto& a, const auto& b) {
       return a.v < b.v;
     };
 
@@ -372,9 +377,9 @@ class ButterflySorter {
         auto mid = begin + (end - begin) / 2;
         #pragma omp taskgroup 
         {
-          #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<12))
+          #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<11))
           mergeSortParallelRecursive(begin, mid);
-          #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<12))
+          #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<11))
           mergeSortParallelRecursive(mid, end); 
           #pragma omp taskyield
         }  
