@@ -329,7 +329,7 @@ class ButterflySorter {
             //     partitionDummy(batch, batch + bucketThisBatch * Z);
             // partition dummies to the end
             Assert(realEnd <= batch + numElementFit);
-            mergeSortParallel(batch, realEnd);
+            ParallelSort(batch, realEnd);
             // std::sort(batch, realEnd, cmpVal);
             auto mergeSortReaderBeginIt = mergeSortFirstLayerWriter.it;
             for (auto it = batch; it != realEnd; ++it) {
@@ -367,6 +367,40 @@ class ButterflySorter {
   }
 
   template <typename Iterator>
+  void quickSortParallelRecursive(Iterator begin, Iterator end) {
+    auto cmpVal = [](const auto& a, const auto& b) {
+      return a.v < b.v;
+    };
+
+    if (end - begin > 1) {
+      if (end - begin >= 1024) {
+        std::nth_element(begin, begin + 5, begin + 10,
+          [](const auto& a, const auto& b) { return a.v < b.v; }
+        );
+        // std::iter_swap(begin + 12, end - 1);
+        auto pivot = (begin + 5);
+        auto partitionPoint = std::partition(begin, end,
+          [pivot](const auto& e) { return e.v < pivot->v; });
+        // std::iter_swap(partitionPoint, pivot);
+        auto pivotPos = std::find(partitionPoint, end, pivot);
+        if (pivotPos != end) {
+          std::iter_swap(partitionPoint, pivotPos);
+        }
+        #pragma omp taskgroup 
+        {
+          #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
+          quickSortParallelRecursive(begin, partitionPoint);
+          #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
+          quickSortParallelRecursive(partitionPoint + 1, end); 
+          #pragma omp taskyield
+        }  
+      } else {
+        std::sort(begin, end, cmpVal);
+      }
+    }
+  }
+
+  template <typename Iterator>
   void mergeSortParallelRecursive(Iterator begin, Iterator end) {
     auto cmpVal = [](const auto& a, const auto& b) {
       return a.v < b.v;
@@ -391,7 +425,7 @@ class ButterflySorter {
   }
 
   template <typename Iterator>
-  void mergeSortParallel(Iterator begin, Iterator end) {
+  void ParallelSort(Iterator begin, Iterator end) {
     #pragma omp parallel
     #pragma omp single
     mergeSortParallelRecursive(begin, end);
@@ -465,3 +499,4 @@ void KWayButterflyOShuffle(Vec& vec, uint32_t inAuth, uint64_t heapSize) {
 }
 
 }  // namespace EM::Algorithm
+
