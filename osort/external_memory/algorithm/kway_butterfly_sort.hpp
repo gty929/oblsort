@@ -70,7 +70,7 @@ class ButterflySorter {
                         // in the first layer of external-memory merge sort
 
   // writer for the first layer of external-memory merge sort
-  std::conditional_t<task == KWAYBUTTERFLYOSORT, typename Vector<T>::Writer, uint64_t> mergeSortFirstLayerWriter;
+  std::conditional_t<task == KWAYBUTTERFLYOSORT, typename Vector<T>::DeferedWriter, uint64_t> mergeSortFirstLayerWriter;
 
   RWManager<typename IOVector::PrefetchReader, typename IOVector::Iterator> inputReaderManager;  // input reader
   RWManager<typename IOVector::Writer, typename IOVector::Iterator> outputWriterManager;         // output writer
@@ -377,15 +377,11 @@ class ButterflySorter {
         std::nth_element(begin, begin + 5, begin + 10,
           [](const auto& a, const auto& b) { return a.v < b.v; }
         );
-        // std::iter_swap(begin + 12, end - 1);
-        auto pivot = (begin + 5);
-        auto partitionPoint = std::partition(begin, end,
+        std::iter_swap(begin + 5, end - 1);
+        auto pivot = (end - 1);
+        auto partitionPoint = std::partition(begin, end - 1,
           [pivot](const auto& e) { return e.v < pivot->v; });
-        // std::iter_swap(partitionPoint, pivot);
-        auto pivotPos = std::find(partitionPoint, end, pivot);
-        if (pivotPos != end) {
-          std::iter_swap(partitionPoint, pivotPos);
-        }
+        std::iter_swap(partitionPoint, end - 1);
         #pragma omp taskgroup 
         {
           #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
@@ -428,7 +424,7 @@ class ButterflySorter {
   void ParallelSort(Iterator begin, Iterator end) {
     #pragma omp parallel
     #pragma omp single
-    mergeSortParallelRecursive(begin, end);
+    quickSortParallelRecursive(begin, end);
   }
 
   void sort() {
