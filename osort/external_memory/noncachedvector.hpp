@@ -548,41 +548,11 @@ struct Vector {
   struct DeferedWriter : Writer {
 
     std::vector<std::pair<Page, size_t>> pages_to_write;
-    std::mutex mutex;
-    std::thread write_thread;
-    bool stop_thread = false;
+
+    DeferedWriter() { }
 
     DeferedWriter(Iterator _begin, Iterator _end, uint32_t counter = 0)
-        : Writer(_begin, _end, counter),
-          write_thread(&DeferedWriter::backgroundWrite, this) {}
-    
-    ~DeferedWriter() {
-        stop_thread = true;
-        if (write_thread.joinable()) {
-            write_thread.join(); 
-        }
-    }
-
-    void backgroundWrite() {
-      while (!stop_thread) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-        std::vector<std::pair<Page, size_t>> temp_pages;
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            std::swap(temp_pages, pages_to_write);
-        }
-
-        auto& vec = this->it.getVector();
-        for (auto& pair : temp_pages) {
-          if constexpr (AUTH) {
-            vec.server.WriteLazy(pair.second, pair.first, this->counter);
-          } else {
-            vec.server.WriteLazy(pair.second, pair.first);
-          } 
-        }
-      }
-    }
+        : Writer(_begin, _end, counter) {}
 
     void write(const T& element) {
       *this->curr = element;
@@ -594,19 +564,19 @@ struct Vector {
         size_t pageIdx = this->it.get_page_idx() - 1;
         
         // defer the write operation
-        std::lock_guard<std::mutex> lock(mutex);
         pages_to_write.emplace_back(this->cache, pageIdx);
 
-        // if (pages_to_write.size() == 3) {
-        //   for (auto& pair: pages_to_write) {
-        //     if constexpr (AUTH) {
-        //       vec.server.WriteLazy(pair.second, pair.first, this->counter);
-        //     } else {
-        //       vec.server.WriteLazy(pair.second, pair.first);
-        //     } 
-        //   }
-        //   pages_to_write.clear();
-        // }
+        if (pages_to_write.size() == 32) {
+          #pragma omp parallel for schedule(static)
+          for (auto& pair: pages_to_write) {
+            if constexpr (AUTH) {
+              vec.server.WriteLazy(pair.second, pair.first, this->counter);
+            } else {
+              vec.server.WriteLazy(pair.second, pair.first);
+            } 
+          }
+          pages_to_write.clear();
+        }
 
         this->curr = this->cache.pages;
       }
@@ -617,18 +587,15 @@ struct Vector {
       size_t pageIdx = this->it.get_page_idx();
       auto& vec = this->it.getVector();
 
-      std::vector<std::pair<Page, size_t>> temp_pages;
-      {
-        std::lock_guard<std::mutex> lock(mutex);
-        std::swap(temp_pages, pages_to_write);
-      }
-      for (auto& pair: temp_pages) {
+      #pragma omp parallel for schedule(static)
+      for (auto& pair: pages_to_write) {
         if constexpr (AUTH) {
           vec.server.WriteLazy(pair.second, pair.first, this->counter);
         } else {
           vec.server.WriteLazy(pair.second, pair.first);
         } 
       }
+      pages_to_write.clear();
 
       if (pageOffset != 0) {
         Page originalPage;
