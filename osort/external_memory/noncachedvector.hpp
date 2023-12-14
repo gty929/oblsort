@@ -387,6 +387,7 @@ struct Vector {
 
   struct NonLazyPrefetchReader {
     std::vector<Page> cache;  // ring cache
+    std::vector<uint64_t> jobCounters;
     const uint64_t cacheCapacity;
     Iterator it;
     Iterator end;
@@ -394,6 +395,8 @@ struct Vector {
     T* currPageEnd = (T*)UINT64_MAX;
     const size_t endPageIdx;
     uint32_t counter;
+
+    int count = 0;
 
     NonLazyPrefetchReader(Iterator _begin, Iterator _end, uint32_t counter = 0,
                        size_t cacheCapacity = 16)
@@ -405,13 +408,13 @@ struct Vector {
 
     void init() {
       cache.resize(cacheCapacity);
+      jobCounters.resize(cacheCapacity);
       curr = cache[0].pages + it.get_page_offset();
       currPageEnd = cache[1].pages;
       auto& vec = it.getVector();
 
       size_t pageIdx = it.get_page_idx();
-      // std::cout << "pageIdx: " << pageIdx << "; endPageIdx: " << endPageIdx << std::endl; 
-      // bool flag = false;
+      bool flag = false;
       #pragma omp parallel for schedule(static)
       for (size_t cacheIdx = 0; cacheIdx < cacheCapacity; ++cacheIdx) {
         // if (flag)
@@ -428,6 +431,22 @@ struct Vector {
         ++pageIdx;
       }
       vec.server.flushRead();
+      // size_t pageIdx = it.get_page_idx();
+      // #pragma omp parallel
+      // {
+      //   #pragma omp for schedule(static) nowait
+      //   for (size_t cacheIdx = 0; cacheIdx < cacheCapacity; ++cacheIdx) {
+      //     #pragma omp task
+      //     {
+      //       if constexpr (AUTH)
+      //         jobCounters[cacheIdx] = vec.server.ReadLazy(pageIdx, cache[cacheIdx], counter);
+      //       else 
+      //         jobCounters[cacheIdx] = vec.server.ReadLazy(pageIdx, cache[cacheIdx]);
+      //     }
+      //     ++pageIdx;
+      //   }
+      // }
+    
     }
 
     T& get() {
@@ -435,16 +454,39 @@ struct Vector {
       if (curr == currPageEnd) {
         size_t prevCacheIdx = (Page*)currPageEnd - &cache[0] - 1;
         size_t currCacheIdx = (prevCacheIdx + 1) % cacheCapacity;
+
+        // #pragma omp parallel
+        // {
+        //     #pragma omp single
+        //     {
+        //         #pragma omp taskwait
+        //     }
+        // }
       
         auto& vec = it.getVector();
         size_t nextPageIdx = it.get_page_idx() + cacheCapacity - 1;
 
         if (nextPageIdx < endPageIdx) {
           // overwrite the previously cached page
-          if constexpr (AUTH) {
-            vec.server.ReadLazy(nextPageIdx, cache[prevCacheIdx], counter);
-          } else {
-            vec.server.ReadLazy(nextPageIdx, cache[prevCacheIdx]);
+          // if constexpr (AUTH) {
+          //   vec.server.ReadLazy(nextPageIdx, cache[prevCacheIdx], counter);
+          // } else {
+          //   vec.server.ReadLazy(nextPageIdx, cache[prevCacheIdx]);
+          // }
+
+          #pragma omp parallel
+          {
+            #pragma omp single nowait
+            {
+              #pragma omp task
+              {
+                if constexpr (AUTH) {
+                  vec.server.ReadLazy(nextPageIdx, cache[prevCacheIdx], counter);
+                } else {
+                  vec.server.ReadLazy(nextPageIdx, cache[prevCacheIdx]);
+                }
+              }
+            }
           }
         }
 
