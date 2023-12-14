@@ -70,6 +70,7 @@ class ButterflySorter {
       std::pair<typename Vector<T>::Iterator, typename Vector<T>::Iterator>>
       mergeSortRanges;  // pairs of iterators that specifies each sorted range
                         // in the first layer of external-memory merge sort
+  uint64_t sort_time;
 
   // writer for the first layer of external-memory merge sort
   std::conditional_t<task == KWAYBUTTERFLYOSORT, typename Vector<T>::Writer, uint64_t> mergeSortFirstLayerWriter;
@@ -91,6 +92,7 @@ class ButterflySorter {
       : mergeSortFirstLayer(
             task == KWAYBUTTERFLYOSORT ? inputEndIt - inputBeginIt : 0),
         numElementFit(_heapSize / sizeof(WrappedT)) {
+    sort_time = 0;
     size_t size = inputEndIt - inputBeginIt;
     batch = (WrappedT*)malloc(_heapSize); // declare ahead to avoid fragmentation
     if (!batch) {
@@ -329,12 +331,15 @@ class ButterflySorter {
             auto realEnd = std::partition(batch, batch + bucketThisBatch * Z, isNotDummy);
             Assert(realEnd <= batch + numElementFit);
            
-            // auto start = std::chrono::system_clock::now();
+            uint64_t currTime;
+            ocall_measure_time(&currTime);
             ParallelSort(batch, realEnd);
             // std::sort(batch, realEnd, cmpVal);
-            // auto end = std::chrono::system_clock::now();
-            // std::chrono::duration<double> diff = end - start;
-            // printf("time for sorting (s): %9f\n", diff.count());
+            uint64_t currTime2;
+            ocall_measure_time(&currTime2);
+            uint64_t timediff = currTime2 - currTime;
+            sort_time += timediff;
+            // printf("%d.%d\n", timediff / 1'000'000'000, timediff % 1'000'000'000);
 
             auto mergeSortReaderBeginIt = mergeSortFirstLayerWriter.it;
             for (auto it = batch; it != realEnd; ++it) {
@@ -369,6 +374,10 @@ class ButterflySorter {
     } else {
       outputWriterManager.flush();
     }
+  }
+
+  void print_sort_time() {
+    printf("total sorting time is: %d.%d\n", sort_time / 1'000'000'000, sort_time % 1'000'000'000);
   }
 
   template <typename Iterator>
@@ -429,7 +438,7 @@ class ButterflySorter {
   void ParallelSort(Iterator begin, Iterator end) {
     #pragma omp parallel
     #pragma omp single
-    mergeSortParallelRecursive(begin, end);
+    quickSortParallelRecursive(begin, end);
   }
 
   void sort() {
@@ -482,6 +491,7 @@ void KWayButterflySort(Iterator begin, Iterator end, uint32_t inAuth,
   ButterflySorter<Iterator, KWAYBUTTERFLYOSORT> sorter(begin, end, inAuth,
                                                        heapSize);
   sorter.sort();
+  sorter.print_sort_time();
   const auto& mergeRanges = sorter.getMergeSortBatchRanges();
 
   ExtMergeSort(begin, end, mergeRanges, inAuth + 1,
