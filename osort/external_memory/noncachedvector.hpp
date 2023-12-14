@@ -385,87 +385,84 @@ struct Vector {
     void init() {}
   };
 
-  struct NonLazyPrefetchReader : public Reader {
+  struct NonLazyPrefetchReader {
+    std::vector<Page> cache;  // ring cache
+    const uint64_t cacheCapacity;
+    Iterator it;
+    Iterator end;
+    T* curr = (T*)UINT64_MAX;
+    T* currPageEnd = (T*)UINT64_MAX;
+    const size_t endPageIdx;
+    uint32_t counter;
 
-    // prefetch one page every time
-    Page prefetched_cache;
-    size_t endPageIdx;
+    NonLazyPrefetchReader(Iterator _begin, Iterator _end, uint32_t counter = 0,
+                       size_t cacheCapacity = 16)
+        : it(_begin),
+          end(_end),
+          cacheCapacity(cacheCapacity),
+          endPageIdx((_end - 1).get_page_idx() + 1),
+          counter(counter) {}
 
-    NonLazyPrefetchReader(Iterator _begin, Iterator _end, uint32_t counter = 0)
-        : Reader(_begin, _end, counter) {
-      endPageIdx = (_end - 1).get_page_idx() + 1;
+    void init() {
+      cache.resize(cacheCapacity);
+      curr = cache[0].pages + it.get_page_offset();
+      currPageEnd = cache[1].pages;
+      auto& vec = it.getVector();
+
+      size_t pageIdx = it.get_page_idx();
+      // std::cout << "pageIdx: " << pageIdx << "; endPageIdx: " << endPageIdx << std::endl; 
+      // bool flag = false;
+      #pragma omp parallel for schedule(static)
+      for (size_t cacheIdx = 0; cacheIdx < cacheCapacity; ++cacheIdx) {
+        // if (flag)
+        //   continue;
+        // if (pageIdx >= endPageIdx) {
+        //   flag = true;
+        //   continue;
+        // }
+        if constexpr (AUTH) {
+          vec.server.ReadLazy(pageIdx, cache[cacheIdx], counter);
+        } else {
+          vec.server.ReadLazy(pageIdx, cache[cacheIdx]);
+        }
+        ++pageIdx;
+      }
+      vec.server.flushRead();
     }
-
-    void init() {}
 
     T& get() {
-      Assert(!this->eof());
-      if (this->curr >= this->cache.pages + item_per_page) {
-        auto& vec = this->it.getVector();
-        const size_t pageIdx = this->translatePageIdx(this->it.get_page_idx());
-        if constexpr (AUTH) {
-          if (this->curr == (T*)UINT64_MAX) {
-            // read two page once on init
-            vec.server.Read(pageIdx, this->cache, this->counter);
-            vec.server.Read(pageIdx + 1, prefetched_cache, this->counter);
-          } else {
-            // this->cache = prefetched_cache;
-            // if (pageIdx + 1 < endPageIdx)
-            //   vec.server.Read(pageIdx + 1, prefetched_cache, this->counter);
-            #pragma omp parallel
-            {
-              #pragma omp sections nowait
-              {
-                #pragma omp section
-                {
-                  // switch cache and prefetched_cache
-                  this->cache = prefetched_cache;
-                }
-                #pragma omp section
-                {
-                  // only update prefetched cache for later call
-                  if (pageIdx + 1 < endPageIdx)
-                    vec.server.Read(pageIdx + 1, prefetched_cache, this->counter);
-                }
-              }
-            }
-          }
+      Assert(!eof());
+      if (curr == currPageEnd) {
+        size_t prevCacheIdx = (Page*)currPageEnd - &cache[0] - 1;
+        size_t currCacheIdx = (prevCacheIdx + 1) % cacheCapacity;
+      
+        auto& vec = it.getVector();
+        size_t nextPageIdx = it.get_page_idx() + cacheCapacity - 1;
 
-        } else {
-          // similar to AUTH case
-          if (this->curr == (T*)UINT64_MAX) {
-            vec.server.Read(pageIdx, this->cache);
-            vec.server.Read(pageIdx + 1, prefetched_cache);
+        if (nextPageIdx < endPageIdx) {
+          // overwrite the previously cached page
+          if constexpr (AUTH) {
+            vec.server.ReadLazy(nextPageIdx, cache[prevCacheIdx], counter);
           } else {
-            // this->cache = prefetched_cache;
-            // if (pageIdx + 1 < endPageIdx)
-            //   vec.server.Read(pageIdx + 1, prefetched_cache);
-            #pragma omp parallel
-            {
-              #pragma omp sections nowait
-              {
-                #pragma omp section
-                {
-                  this->cache = prefetched_cache;
-                }
-                #pragma omp section
-                {
-                  if (pageIdx + 1 < endPageIdx)
-                    vec.server.Read(pageIdx + 1, prefetched_cache);
-                }
-              }
-            }
+            vec.server.ReadLazy(nextPageIdx, cache[prevCacheIdx]);
           }
         }
-        
-        if (this->curr != this->cache.pages + item_per_page) {
-          this->curr = this->cache.pages + this->it.get_page_offset();
-        } else {
-          this->curr = this->cache.pages;
-        }
+
+        curr = (T*)(&cache[0] + currCacheIdx);  // at the begining of the page
+        currPageEnd = curr + item_per_page;
       }
-      return *this->curr;
+      return *curr;
     }
+
+    const T& read() {
+      Assert(!eof());
+      const T& val = get();
+      ++it;
+      ++curr;
+      return val;
+    }
+
+    bool eof() { return end <= it; }
   };
 #endif
 
@@ -549,10 +546,14 @@ struct Vector {
 
     std::vector<std::pair<Page, size_t>> pages_to_write;
 
-    DeferedWriter() { }
+    DeferedWriter() {
+      pages_to_write.reserve(64);
+    }
 
     DeferedWriter(Iterator _begin, Iterator _end, uint32_t counter = 0)
-        : Writer(_begin, _end, counter) {}
+        : Writer(_begin, _end, counter) {
+      pages_to_write.reserve(64);
+    }
 
     void write(const T& element) {
       *this->curr = element;
@@ -566,7 +567,12 @@ struct Vector {
         // defer the write operation
         pages_to_write.emplace_back(this->cache, pageIdx);
 
-        if (pages_to_write.size() == 32) {
+        if (pages_to_write.size() == 64) {
+          // if constexpr (AUTH) {
+          //   vec.server.WriteBatch(pages_to_write, this->counter);
+          // } else {
+          //   vec.server.WriteBatch(pages_to_write);
+          // }
           #pragma omp parallel for schedule(static)
           for (auto& pair: pages_to_write) {
             if constexpr (AUTH) {
@@ -595,6 +601,11 @@ struct Vector {
           vec.server.WriteLazy(pair.second, pair.first);
         } 
       }
+      // if constexpr (AUTH) {
+      //   vec.server.WriteBatch(pages_to_write, this->counter);
+      // } else {
+      //   vec.server.WriteBatch(pages_to_write);
+      // }
       pages_to_write.clear();
 
       if (pageOffset != 0) {

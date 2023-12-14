@@ -618,10 +618,10 @@ void ExtMergeSort(IOIterator begin, IOIterator end,
   using T = typename std::iterator_traits<Iterator>::value_type;
   using Vector = typename
       std::remove_reference<decltype(*(Iterator::getNullVector()))>::type;
-  using Reader = typename Vector::LazyPrefetchReader;
+  using Reader = typename Vector::NonLazyPrefetchReader;
   using IOVector = typename
       std::remove_reference<decltype(*(IOIterator::getNullVector()))>::type;
-  typename IOVector::Writer outputWriter(begin, end, outAuth);
+  typename IOVector::DeferedWriter outputWriter(begin, end, outAuth);
   // for merge sort
   const auto* mergeRangesPtr = &mergeRanges;
   std::vector<std::pair<Iterator, Iterator>> newMergeRanges;
@@ -672,6 +672,8 @@ void ExtMergeSort(IOIterator begin, IOIterator end,
   }
   std::vector<std::pair<Reader*, T*>> heap;
   heap.reserve(mergeRanges.size() + 1);
+
+  #pragma omp parallel for schedule(static)
   for (auto& reader : mergeReaders) {
     reader.init();
     heap.emplace_back(&reader, &reader.get());
@@ -724,8 +726,12 @@ void ExtMergeSort(IOIterator begin, IOIterator end,
   }
 
   uint32_t outAuth = incAuth ? inAuth + 1 : inAuth;
+  auto start1 = std::chrono::system_clock::now();
   ExtMergeSort(begin, end, mergeRanges, outAuth,
                batchSize / (2 * Vector<T>::item_per_page));
+  auto end1 = std::chrono::system_clock::now();
+  std::chrono::duration<double> diff = end1 - start1;
+  std::cout << "ExtMergeSort time (s): " << std::setw(9) << diff.count() << std::endl;
 }
 
 template <const bool incAuth = true, class Vec>

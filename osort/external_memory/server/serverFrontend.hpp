@@ -1,6 +1,7 @@
 #pragma once
 #include <cinttypes>
 #include <vector>
+#include <omp.h>
 
 #include "common/dmcache.hpp"
 #include "common/encrypted.hpp"
@@ -147,6 +148,20 @@ struct NonCachedServerFrontendInstance {
   // dummy implementation to be overloaded
   uint64_t WriteLazy(const IndexType i, const T& in) {
     Write(i, in);
+    return 0;
+  }
+
+  uint64_t WriteBatch(const std::vector<std::pair<T,  IndexType>>& batch) {
+    #pragma omp parallel for schedule(static)
+    for (auto& pair: batch)
+      Write(pair.second, pair.first);
+    return 0;
+  }
+
+  uint64_t WriteBatch(const std::vector<std::pair<T, IndexType>>& batch, uint32_t counter) {
+    #pragma omp parallel for schedule(static)
+    for (auto& pair: batch)
+      Write(pair.second, pair.first, counter);
     return 0;
   }
 
