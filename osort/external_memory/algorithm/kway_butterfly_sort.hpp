@@ -5,6 +5,8 @@
 #include "sort_building_blocks.hpp"
 #include "external_memory/par_io.hpp"
 
+// #include <chrono>
+
 /// This file implements the flex-way butterfly osort and oshuffle algorithms.
 
 namespace EM::Algorithm {
@@ -70,7 +72,7 @@ class ButterflySorter {
                         // in the first layer of external-memory merge sort
 
   // writer for the first layer of external-memory merge sort
-  std::conditional_t<task == KWAYBUTTERFLYOSORT, typename Vector<T>::DeferedWriter, uint64_t> mergeSortFirstLayerWriter;
+  std::conditional_t<task == KWAYBUTTERFLYOSORT, typename Vector<T>::Writer, uint64_t> mergeSortFirstLayerWriter;
 
   RWManager<typename IOVector::PrefetchReader, typename IOVector::Iterator> inputReaderManager;  // input reader
   RWManager<typename IOVector::Writer, typename IOVector::Iterator> outputWriterManager;         // output writer
@@ -325,12 +327,15 @@ class ButterflySorter {
             };
 
             auto realEnd = std::partition(batch, batch + bucketThisBatch * Z, isNotDummy);
-            // auto realEnd =
-            //     partitionDummy(batch, batch + bucketThisBatch * Z);
-            // partition dummies to the end
             Assert(realEnd <= batch + numElementFit);
+           
+            // auto start = std::chrono::system_clock::now();
             ParallelSort(batch, realEnd);
             // std::sort(batch, realEnd, cmpVal);
+            // auto end = std::chrono::system_clock::now();
+            // std::chrono::duration<double> diff = end - start;
+            // printf("time for sorting (s): %9f\n", diff.count());
+
             auto mergeSortReaderBeginIt = mergeSortFirstLayerWriter.it;
             for (auto it = batch; it != realEnd; ++it) {
               mergeSortFirstLayerWriter.write(it->getData());
@@ -386,9 +391,9 @@ class ButterflySorter {
         {
           #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
           quickSortParallelRecursive(begin, partitionPoint);
-          #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
+          // #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
           quickSortParallelRecursive(partitionPoint + 1, end); 
-          #pragma omp taskyield
+          // #pragma omp taskyield
         }  
       } else {
         std::sort(begin, end, cmpVal);
@@ -409,9 +414,9 @@ class ButterflySorter {
         {
           #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<11))
           mergeSortParallelRecursive(begin, mid);
-          #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<11))
+          // #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<11))
           mergeSortParallelRecursive(mid, end); 
-          #pragma omp taskyield
+          // #pragma omp taskyield
         }  
         std::inplace_merge(begin, mid, end, cmpVal); 
       } else {
@@ -424,7 +429,7 @@ class ButterflySorter {
   void ParallelSort(Iterator begin, Iterator end) {
     #pragma omp parallel
     #pragma omp single
-    quickSortParallelRecursive(begin, end);
+    mergeSortParallelRecursive(begin, end);
   }
 
   void sort() {
