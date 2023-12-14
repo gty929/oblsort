@@ -674,10 +674,11 @@ void ExtMergeSort(IOIterator begin, IOIterator end,
   heap.reserve(mergeRanges.size() + 1);
 
   #pragma omp parallel for schedule(static)
-  for (auto& reader : mergeReaders) {
+  for (auto& reader : mergeReaders)
     reader.init();
+  for (auto& reader : mergeReaders) 
     heap.emplace_back(&reader, &reader.get());
-  }
+    
   std::make_heap(heap.begin(), heap.end(), cmpmerge);
   while (!heap.empty()) {
     Reader* top = heap[0].first;
