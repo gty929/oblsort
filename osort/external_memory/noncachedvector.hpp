@@ -417,11 +417,14 @@ struct Vector {
       size_t pageIdx = it.get_page_idx();
       // #pragma omp parallel for schedule(static)
       for (size_t cacheIdx = 0; cacheIdx < cacheCapacity; ++cacheIdx) {
-        if constexpr (AUTH) {
-          vec.server.ReadLazy(pageIdx, cache[cacheIdx], counter);
-        } else {
-          vec.server.ReadLazy(pageIdx, cache[cacheIdx]);
-        }
+        // #pragma omp task shared(cacheIdx, pageIdx, cache, counter, vec)
+        // {
+          if constexpr (AUTH) {
+            vec.server.ReadLazy(pageIdx, cache[cacheIdx], counter);
+          } else {
+            vec.server.ReadLazy(pageIdx, cache[cacheIdx]);
+          }
+        // }
         ++pageIdx;
       }
       vec.server.flushRead();    
@@ -554,94 +557,97 @@ struct Vector {
     }
   };
 
-  struct DeferedWriter : Writer {
+  struct DeferedWriter {
 
+    Page cache;
+    Iterator it;
+    Iterator end;
+    T* curr;
+    uint32_t counter;
     std::vector<std::pair<Page, size_t>> pages_to_write;
 
-    DeferedWriter() {
-      pages_to_write.reserve(64);
-    }
+    DeferedWriter() { pages_to_write.reserve(64); }
 
     DeferedWriter(Iterator _begin, Iterator _end, uint32_t counter = 0)
-        : Writer(_begin, _end, counter) {
+        : counter(counter) {
       pages_to_write.reserve(64);
+      init(_begin, _end, counter);
+    }
+    void init(Iterator _begin, Iterator _end, uint32_t counter = 0) {
+      this->counter = counter;
+      Assert(_begin.getVector().begin() <= _begin);
+      Assert(_end <= _end.getVector().end());
+      this->it = _begin;
+      this->end = _end;
+      auto& vec = it.getVector();
+      size_t pageIdx = it.get_page_idx();
+      size_t pageOffset = it.get_page_offset();
+      if (pageOffset != 0 && _begin != _begin.getVector().begin()) {
+        if constexpr (AUTH) {
+          vec.server.Read(pageIdx, cache, counter);
+        } else {
+          vec.server.Read(pageIdx, cache);
+        }
+      }
+      curr = cache.pages + pageOffset;
     }
 
     void write(const T& element) {
-      *this->curr = element;
-      ++this->curr;
-      ++this->it;
-      if (this->curr == this->cache.pages + item_per_page) {
-        // #pragma omp task
-        // {
-          auto& vec = this->it.getVector();
-          Assert(this->it.get_page_offset() == 0);
-          size_t pageIdx = this->it.get_page_idx() - 1;
-          
-          // defer the write operation
-          pages_to_write.emplace_back(this->cache, pageIdx);
+      *curr = element;
+      ++curr;
+      ++it;
+      if (curr == cache.pages + item_per_page) {
+        auto& vec = it.getVector();
+        Assert(it.get_page_offset() == 0);
+        size_t pageIdx = it.get_page_idx() - 1;
+        
+        // defer the write operation
+        pages_to_write.emplace_back(cache, pageIdx);
 
-          if (pages_to_write.size() == 32) {
-            printf("reach here\n");
-
-            // #pragma omp for schedule(static)
-            // #pragma omp task shared(vec)
-            // {
-            //   #pragma omp parallel for
-              for (auto& pair: pages_to_write) {
-                // #pragma omp task
-                // {
-                if constexpr (AUTH) {
-                  vec.server.WriteLazy(pair.second, pair.first, this->counter);
-                } else {
-                  vec.server.WriteLazy(pair.second, pair.first);
-                }
-                // } 
+        if (pages_to_write.size() == 64) {
+          for (auto& pair: pages_to_write) {
+            #pragma omp task shared(pair, vec, counter) 
+            {
+              if constexpr (AUTH) {
+                vec.server.WriteLazy(pair.second, pair.first, counter);
+              } else {
+                vec.server.WriteLazy(pair.second, pair.first);
               }
-              pages_to_write.clear();
-            // }
+            }
           }
+          pages_to_write.clear();
+        }
+    
+      curr = cache.pages;
       
-        this->curr = this->cache.pages;
-        // }
       }
     }
 
-    void flush() {
-      size_t pageOffset = this->it.get_page_offset();
-      size_t pageIdx = this->it.get_page_idx();
-      auto& vec = this->it.getVector();
+    bool eof() { return end <= it; }
 
-      // #pragma omp parallel for schedule(static) nowait
-      // for (auto& pair: pages_to_write) {
-      //   if constexpr (AUTH) {
-      //     vec.server.WriteLazy(pair.second, pair.first, this->counter);
-      //   } else {
-      //     vec.server.WriteLazy(pair.second, pair.first);
-      //   } 
-      // }
-      // #pragma omp task shared(vec)
-      // {
-        // #pragma omp for schedule(static) 
-        for (auto& pair: pages_to_write) {
-          // #pragma omp task
-          // {
-            if constexpr (AUTH) {
-              vec.server.WriteLazy(pair.second, pair.first, this->counter);
-            } else {
-              vec.server.WriteLazy(pair.second, pair.first);
-            }
-          // } 
-        }
-      // }
+    void flush() {
+      size_t pageOffset = it.get_page_offset();
+      size_t pageIdx = it.get_page_idx();
+      auto& vec = it.getVector();
+
+      for (auto& pair: pages_to_write) {
+        // #pragma omp task shared(pair, vec, counter) 
+        // {
+          if constexpr (AUTH) {
+            vec.server.WriteLazy(pair.second, pair.first, counter);
+          } else {
+            vec.server.WriteLazy(pair.second, pair.first);
+          }
+        // }
+      }
       pages_to_write.clear();
 
       if (pageOffset != 0) {
         Page originalPage;
-        if (this->it != vec.end()) {
+        if (it != vec.end()) {
           if constexpr (AUTH) {
-            if (this->counter == 0) {
-              vec.server.Read(pageIdx, originalPage, this->counter);
+            if (counter == 0) {
+              vec.server.Read(pageIdx, originalPage, counter);
             }
             // for counter greater than 0, we have to overwrite the last page.
             // this issue should be addressed when calling the writer
@@ -650,9 +656,9 @@ struct Vector {
           }
         }
 
-        std::memcpy(originalPage.pages, this->cache.pages, pageOffset * sizeof(T));
+        std::memcpy(originalPage.pages, cache.pages, pageOffset * sizeof(T));
         if constexpr (AUTH) {
-          vec.server.WriteLazy(pageIdx, originalPage, this->counter);
+          vec.server.WriteLazy(pageIdx, originalPage, counter);
         } else {
           vec.server.WriteLazy(pageIdx, originalPage);
         }
