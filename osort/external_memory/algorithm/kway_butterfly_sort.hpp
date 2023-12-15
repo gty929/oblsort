@@ -5,6 +5,8 @@
 #include "sort_building_blocks.hpp"
 #include "external_memory/par_io.hpp"
 
+// #include <chrono>
+
 /// This file implements the flex-way butterfly osort and oshuffle algorithms.
 
 namespace EM::Algorithm {
@@ -68,9 +70,10 @@ class ButterflySorter {
       std::pair<typename Vector<T>::Iterator, typename Vector<T>::Iterator>>
       mergeSortRanges;  // pairs of iterators that specifies each sorted range
                         // in the first layer of external-memory merge sort
+  uint64_t sort_time;
 
   // writer for the first layer of external-memory merge sort
-  std::conditional_t<task == KWAYBUTTERFLYOSORT, typename Vector<T>::DeferedWriter, uint64_t> mergeSortFirstLayerWriter;
+  std::conditional_t<task == KWAYBUTTERFLYOSORT, typename Vector<T>::Writer, uint64_t> mergeSortFirstLayerWriter;
 
   RWManager<typename IOVector::PrefetchReader, typename IOVector::Iterator> inputReaderManager;  // input reader
   RWManager<typename IOVector::Writer, typename IOVector::Iterator> outputWriterManager;         // output writer
@@ -89,6 +92,7 @@ class ButterflySorter {
       : mergeSortFirstLayer(
             task == KWAYBUTTERFLYOSORT ? inputEndIt - inputBeginIt : 0),
         numElementFit(_heapSize / sizeof(WrappedT)) {
+    sort_time = 0;
     size_t size = inputEndIt - inputBeginIt;
     batch = (WrappedT*)malloc(_heapSize); // declare ahead to avoid fragmentation
     if (!batch) {
@@ -325,12 +329,18 @@ class ButterflySorter {
             };
 
             auto realEnd = std::partition(batch, batch + bucketThisBatch * Z, isNotDummy);
-            // auto realEnd =
-            //     partitionDummy(batch, batch + bucketThisBatch * Z);
-            // partition dummies to the end
             Assert(realEnd <= batch + numElementFit);
+           
+            uint64_t currTime;
+            ocall_measure_time(&currTime);
             ParallelSort(batch, realEnd);
             // std::sort(batch, realEnd, cmpVal);
+            uint64_t currTime2;
+            ocall_measure_time(&currTime2);
+            uint64_t timediff = currTime2 - currTime;
+            sort_time += timediff;
+            // printf("%d.%d\n", timediff / 1'000'000'000, timediff % 1'000'000'000);
+
             auto mergeSortReaderBeginIt = mergeSortFirstLayerWriter.it;
             for (auto it = batch; it != realEnd; ++it) {
               mergeSortFirstLayerWriter.write(it->getData());
@@ -366,6 +376,10 @@ class ButterflySorter {
     }
   }
 
+  void print_sort_time() {
+    printf("total sorting time is: %d.%d\n", sort_time / 1'000'000'000, sort_time % 1'000'000'000);
+  }
+
   template <typename Iterator>
   void quickSortParallelRecursive(Iterator begin, Iterator end) {
     auto cmpVal = [](const auto& a, const auto& b) {
@@ -386,9 +400,9 @@ class ButterflySorter {
         {
           #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
           quickSortParallelRecursive(begin, partitionPoint);
-          #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
+          // #pragma omp task shared(begin, partitionPoint, end) untied if (end - begin >= (1<<11))
           quickSortParallelRecursive(partitionPoint + 1, end); 
-          #pragma omp taskyield
+          // #pragma omp taskyield
         }  
       } else {
         std::sort(begin, end, cmpVal);
@@ -409,9 +423,9 @@ class ButterflySorter {
         {
           #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<11))
           mergeSortParallelRecursive(begin, mid);
-          #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<11))
+          // #pragma omp task shared(begin, mid, end) untied if (end - begin >= (1<<11))
           mergeSortParallelRecursive(mid, end); 
-          #pragma omp taskyield
+          // #pragma omp taskyield
         }  
         std::inplace_merge(begin, mid, end, cmpVal); 
       } else {
@@ -477,6 +491,7 @@ void KWayButterflySort(Iterator begin, Iterator end, uint32_t inAuth,
   ButterflySorter<Iterator, KWAYBUTTERFLYOSORT> sorter(begin, end, inAuth,
                                                        heapSize);
   sorter.sort();
+  sorter.print_sort_time();
   const auto& mergeRanges = sorter.getMergeSortBatchRanges();
 
   ExtMergeSort(begin, end, mergeRanges, inAuth + 1,

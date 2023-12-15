@@ -8,6 +8,8 @@
 #include "sort_def.hpp"
 #include "static_sort.hpp"
 
+#include <omp.h>
+
 /// This file contains building blocks for external memory sorting algorithms,
 /// such as interleave and mergesplit.
 
@@ -621,7 +623,7 @@ void ExtMergeSort(IOIterator begin, IOIterator end,
   using Reader = typename Vector::NonLazyPrefetchReader;
   using IOVector = typename
       std::remove_reference<decltype(*(IOIterator::getNullVector()))>::type;
-  typename IOVector::DeferedWriter outputWriter(begin, end, outAuth);
+  typename IOVector::Writer outputWriter(begin, end, outAuth);
   // for merge sort
   const auto* mergeRangesPtr = &mergeRanges;
   std::vector<std::pair<Iterator, Iterator>> newMergeRanges;
@@ -662,36 +664,42 @@ void ExtMergeSort(IOIterator begin, IOIterator end,
   for (const std::pair<Iterator, Iterator>& range : *mergeRangesPtr) {
     mergeReaders.emplace_back(range.first, range.second);
   }
-  if (mergeRanges.size() == 1) {
-    mergeReaders[0].init();
-    while (!mergeReaders[0].eof()) {
-      outputWriter.write(mergeReaders[0].read());
-    }
-    outputWriter.flush();
-    return;
-  }
-  std::vector<std::pair<Reader*, T*>> heap;
-  heap.reserve(mergeRanges.size() + 1);
 
-  #pragma omp parallel for schedule(static)
-  for (auto& reader : mergeReaders)
-    reader.init();
-  for (auto& reader : mergeReaders) 
-    heap.emplace_back(&reader, &reader.get());
-    
-  std::make_heap(heap.begin(), heap.end(), cmpmerge);
-  while (!heap.empty()) {
-    Reader* top = heap[0].first;
-    outputWriter.write(top->read());
-    if (!top->eof()) {
-      heap.emplace_back(top, &top->get());
-      // add a top at the end, which will be swapped to the top by
-      // pop_heap
+  #pragma omp parallel
+  {
+    #pragma omp single
+    {
+      if (mergeRanges.size() == 1) {
+        mergeReaders[0].init();
+        while (!mergeReaders[0].eof()) {
+          outputWriter.write(mergeReaders[0].read());
+        }
+        outputWriter.flush();
+      } else {
+        std::vector<std::pair<Reader*, T*>> heap;
+        heap.reserve(mergeRanges.size() + 1);
+
+        for (auto& reader : mergeReaders) {
+          reader.init();
+          heap.emplace_back(&reader, &reader.get());
+        }
+          
+        std::make_heap(heap.begin(), heap.end(), cmpmerge);
+        while (!heap.empty()) {
+          Reader* top = heap[0].first;
+          outputWriter.write(top->read());
+          if (!top->eof()) {
+            heap.emplace_back(top, &top->get());
+            // add a top at the end, which will be swapped to the top by
+            // pop_heap
+          }
+          std::pop_heap(heap.begin(), heap.end(), cmpmerge);
+          heap.resize(heap.size() - 1);
+        }
+        outputWriter.flush();
+      }
     }
-    std::pop_heap(heap.begin(), heap.end(), cmpmerge);
-    heap.resize(heap.size() - 1);
   }
-  outputWriter.flush();
 }
 
 template <const bool incAuth = true, class IOIterator>
@@ -727,12 +735,15 @@ void ExtMergeSort(IOIterator begin, IOIterator end,
   }
 
   uint32_t outAuth = incAuth ? inAuth + 1 : inAuth;
-  auto start1 = std::chrono::system_clock::now();
+  uint64_t currTime;
+  ocall_measure_time(&currTime);
   ExtMergeSort(begin, end, mergeRanges, outAuth,
-               batchSize / (2 * Vector<T>::item_per_page));
-  auto end1 = std::chrono::system_clock::now();
-  std::chrono::duration<double> diff = end1 - start1;
-  std::cout << "ExtMergeSort time (s): " << std::setw(9) << diff.count() << std::endl;
+    batchSize / (2 * Vector<T>::item_per_page));
+  uint64_t currTime2;
+  ocall_measure_time(&currTime2);
+  uint64_t timediff = currTime2 - currTime;
+  printf("Actual execution time for ExtMergeSort: %d.%d\n", timediff / 1'000'000'000, timediff % 1'000'000'000);
+
 }
 
 template <const bool incAuth = true, class Vec>
