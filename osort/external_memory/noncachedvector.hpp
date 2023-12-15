@@ -400,7 +400,7 @@ struct Vector {
     int count = 0;
 
     NonLazyPrefetchReader(Iterator _begin, Iterator _end, uint32_t counter = 0,
-                       size_t cacheCapacity = 16)
+                       size_t cacheCapacity = 64)
         : it(_begin),
           end(_end),
           cacheCapacity(cacheCapacity),
@@ -414,18 +414,14 @@ struct Vector {
       currPageEnd = cache[1].pages;
       auto& vec = it.getVector();
 
-      size_t pageIdx = it.get_page_idx();
-      // #pragma omp parallel for schedule(static)
-      for (size_t cacheIdx = 0; cacheIdx < cacheCapacity; ++cacheIdx) {
-        // #pragma omp task shared(cacheIdx, pageIdx, cache, counter, vec)
-        // {
-          if constexpr (AUTH) {
-            vec.server.ReadLazy(pageIdx, cache[cacheIdx], counter);
-          } else {
-            vec.server.ReadLazy(pageIdx, cache[cacheIdx]);
-          }
-        // }
-        ++pageIdx;
+      for (size_t cacheIdx = 0, pageIdx = it.get_page_idx();
+           cacheIdx < cacheCapacity && pageIdx < endPageIdx;
+           ++cacheIdx, ++pageIdx) {
+        if constexpr (AUTH) {
+          vec.server.ReadLazy(pageIdx, cache[cacheIdx], counter);
+        } else {
+          vec.server.ReadLazy(pageIdx, cache[cacheIdx]);
+        }
       }
       vec.server.flushRead();    
     }
